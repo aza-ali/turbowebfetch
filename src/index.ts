@@ -64,22 +64,27 @@ function createToolHandlers(): ToolHandlers {
 // =============================================================================
 
 /**
- * Cleans up orphaned Chrome processes from previous crashed sessions.
- * Only kills processes whose parent process no longer exists.
- * Safe to run with multiple Claude Code tabs - won't kill other tabs' browsers.
- * Note: Nodriver uses Chrome, not Firefox.
+ * Cleans up orphaned Chrome processes from previous TurboWebFetch sessions.
+ *
+ * IMPORTANT: Only kills Chrome processes that were spawned by TurboWebFetch,
+ * identified by having '--user-data-dir=.../turbowebfetch_chrome_...' in their args.
+ *
+ * This is safe because:
+ * - User's personal Chrome browser does NOT have this user-data-dir
+ * - Other applications' Chrome instances do NOT have this marker
+ * - Only TurboWebFetch uses the 'turbowebfetch_chrome_' temp directory prefix
  */
 function cleanupOrphanedBrowsers(): void {
   try {
-    // Get all Chrome processes with their PIDs and parent PIDs
-    // Format: PID PPID COMMAND
+    // Get Chrome processes with full command line args
+    // We need the full args to check for our specific user-data-dir marker
     const psOutput = execSync(
-      'ps -eo pid,ppid,comm | grep -i "chrome" | grep -v grep',
+      'ps -eo pid,args | grep -i "chrome" | grep "turbowebfetch_chrome_" | grep -v grep',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim();
 
     if (!psOutput) {
-      return; // No Chrome processes found
+      return; // No TurboWebFetch Chrome processes found
     }
 
     const lines = psOutput.split('\n');
@@ -87,34 +92,25 @@ function cleanupOrphanedBrowsers(): void {
 
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
-      if (parts.length < 2) continue;
+      if (parts.length < 1) continue;
 
       const pid = parseInt(parts[0], 10);
-      const ppid = parseInt(parts[1], 10);
+      if (isNaN(pid)) continue;
 
-      if (isNaN(pid) || isNaN(ppid)) continue;
-
-      // Check if parent process still exists
+      // Kill this TurboWebFetch-spawned Chrome process
       try {
-        // Sending signal 0 checks if process exists without killing it
-        process.kill(ppid, 0);
-        // Parent exists - this is not an orphan, leave it alone
+        process.kill(pid, 'SIGTERM');
+        orphansKilled++;
       } catch {
-        // Parent doesn't exist - this is an orphan, kill it
-        try {
-          process.kill(pid, 'SIGTERM');
-          orphansKilled++;
-        } catch {
-          // Process may have already exited
-        }
+        // Process may have already exited
       }
     }
 
     if (orphansKilled > 0) {
-      log("info", "Cleaned up orphaned browser processes", { count: orphansKilled });
+      log("info", "Cleaned up orphaned TurboWebFetch browser processes", { count: orphansKilled });
     }
   } catch {
-    // ps command failed (no matching processes) - that's fine
+    // ps/grep command failed (no matching processes) - that's fine
   }
 }
 

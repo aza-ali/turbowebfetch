@@ -215,7 +215,7 @@ async def launch_chrome_background_macos(
     url: str,
     port: int,
     user_data_dir: Optional[str] = None,
-) -> subprocess.Popen:
+) -> int:
     """
     Launch Chrome in background mode on macOS using 'open -gj'.
 
@@ -228,7 +228,7 @@ async def launch_chrome_background_macos(
         user_data_dir: Optional user data directory
 
     Returns:
-        Popen process object
+        Chrome process PID (int) - NOT the 'open' command PID
     """
     # Build Chrome arguments
     chrome_args = [
@@ -283,8 +283,9 @@ async def launch_chrome_background_macos(
 
     log_info("chrome_background_launch", cmd=' '.join(cmd[:7]) + ' --args [...]', port=port)
 
-    # Launch Chrome
-    process = subprocess.Popen(
+    # Launch Chrome via 'open' command
+    # Note: 'open' exits immediately after launching Chrome, so we can't use it for cleanup
+    subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -293,6 +294,8 @@ async def launch_chrome_background_macos(
     # Wait for Chrome to start and open the debugging port
     max_wait = 10  # seconds
     waited = 0
+    chrome_pid = None
+
     while waited < max_wait:
         await asyncio.sleep(0.5)
         waited += 0.5
@@ -302,13 +305,33 @@ async def launch_chrome_background_macos(
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(1)
                 s.connect(('127.0.0.1', port))
-                log_info("chrome_background_ready", port=port, waited_seconds=waited)
-                return process
+
+                # Port is open - now find the actual Chrome PID
+                # Look for Chrome process with our specific debugging port
+                try:
+                    ps_output = subprocess.check_output(
+                        ['ps', '-eo', 'pid,args'],
+                        text=True
+                    )
+                    for line in ps_output.strip().split('\n'):
+                        if f'--remote-debugging-port={port}' in line and 'Google Chrome' in line:
+                            # Extract PID (first column)
+                            pid_str = line.strip().split()[0]
+                            chrome_pid = int(pid_str)
+                            log_info("chrome_background_ready", port=port, pid=chrome_pid, waited_seconds=waited)
+                            return chrome_pid
+                except Exception as e:
+                    log_error("chrome_pid_lookup_failed", error=str(e))
+
+                # Fallback: port is open but couldn't find PID
+                # This shouldn't happen, but if it does, we can't clean up properly
+                log_error("chrome_pid_not_found", port=port)
+                raise FetchError("BROWSER_LAUNCH_FAILED", f"Chrome started but couldn't find its PID")
+
         except (ConnectionRefusedError, socket.timeout, OSError):
             continue
 
     # If we get here, Chrome didn't start properly
-    process.kill()
     raise FetchError("BROWSER_LAUNCH_FAILED", f"Chrome didn't open debugging port {port} within {max_wait}s")
 
 
@@ -323,7 +346,7 @@ class FetchError(Exception):
 async def start_headed_browser(
     chrome_path: Optional[str],
     url: str,
-) -> Tuple[Any, Any, Optional[subprocess.Popen], Optional[int]]:
+) -> Tuple[Any, Any, Optional[int], Optional[int]]:
     """
     Start a headed browser, using background mode on macOS.
 
@@ -337,8 +360,8 @@ async def start_headed_browser(
         url: URL to navigate to
 
     Returns:
-        Tuple of (browser, page, chrome_process, debug_port)
-        chrome_process and debug_port are only set on macOS background mode
+        Tuple of (browser, page, chrome_pid, debug_port)
+        chrome_pid and debug_port are only set on macOS background mode
     """
     system = platform.system()
 
@@ -347,27 +370,41 @@ async def start_headed_browser(
         port = find_available_port()
         log_info("headed_background_mode", platform="macOS", port=port)
 
-        # Launch Chrome in background
-        chrome_process = await launch_chrome_background_macos(
+        # Launch Chrome in background - returns the Chrome PID
+        chrome_pid = await launch_chrome_background_macos(
             chrome_path=chrome_path,
             url=url,
             port=port,
         )
 
         # Connect nodriver to the existing Chrome
-        # When host and port are provided, nodriver doesn't launch its own browser
-        browser = await uc.start(
-            host='127.0.0.1',
-            port=port,
-            sandbox=False,
-        )
+        # If connection fails, we MUST clean up the Chrome process we just spawned
+        try:
+            # When host and port are provided, nodriver doesn't launch its own browser
+            browser = await uc.start(
+                host='127.0.0.1',
+                port=port,
+                sandbox=False,
+            )
 
-        # Get the page (should already be at the URL)
-        # nodriver's browser.get() with an existing browser just switches to/opens a tab
-        pages = await browser.get(url)
-        page = pages
+            # Get the page (should already be at the URL)
+            # nodriver's browser.get() with an existing browser just switches to/opens a tab
+            pages = await browser.get(url)
+            page = pages
 
-        return browser, page, chrome_process, port
+            return browser, page, chrome_pid, port
+        except Exception as e:
+            # Nodriver failed to connect - clean up the Chrome process we spawned
+            log_error("nodriver_connect_failed", port=port, error=str(e))
+            try:
+                import signal
+                os.kill(chrome_pid, signal.SIGTERM)
+            except:
+                try:
+                    os.kill(chrome_pid, signal.SIGKILL)
+                except:
+                    pass
+            raise  # Re-raise the original exception
     else:
         # Other platforms: Use off-screen positioning fallback
         log_info("headed_offscreen_mode", platform=system, window_position="-2400,-2400")
@@ -762,7 +799,7 @@ async def fetch_page(
         Dict with success, content, url, title, status
     """
     browser = None
-    chrome_process = None  # For macOS background mode cleanup
+    chrome_pid = None  # For macOS background mode cleanup (actual Chrome PID)
     debug_port = None  # For macOS background mode
     start_time = time.time()
 
@@ -860,7 +897,7 @@ async def fetch_page(
             browser = None
 
             # Relaunch in headed mode (background on macOS, off-screen on others)
-            browser, page, chrome_process, debug_port = await start_headed_browser(
+            browser, page, chrome_pid, debug_port = await start_headed_browser(
                 chrome_path=chrome_path,
                 url=url,
             )
@@ -933,7 +970,7 @@ async def fetch_page(
                 browser = None
 
                 # Relaunch in headed mode (background on macOS, off-screen on others)
-                browser, page, chrome_process, debug_port = await start_headed_browser(
+                browser, page, chrome_pid, debug_port = await start_headed_browser(
                     chrome_path=chrome_path,
                     url=url,
                 )
@@ -1068,17 +1105,29 @@ async def fetch_page(
                 log_error("browser_cleanup_failed", error=str(e))
 
         # Clean up Chrome process if launched in background mode (macOS)
-        if chrome_process:
+        # Must kill all Chrome processes with our user-data-dir (main + helpers)
+        if chrome_pid and debug_port:
+            import signal
+            log_info("chrome_cleanup_starting", pid=chrome_pid, port=debug_port)
+
+            # Use pkill with SIGKILL to immediately kill ALL Chrome processes with our port
+            # This is more reliable than SIGTERM which Chrome may ignore
+            # Note: macOS pkill uses "-KILL" not "-9"
             try:
-                chrome_process.terminate()
-                chrome_process.wait(timeout=5)
-                log_info("chrome_background_cleanup", port=debug_port)
+                subprocess.run(
+                    ['pkill', '-KILL', '-f', f'remote-debugging-port={debug_port}'],
+                    timeout=3
+                )
+                log_info("chrome_background_cleanup", pid=chrome_pid, port=debug_port)
+            except subprocess.TimeoutExpired:
+                log_error("chrome_pkill_timeout", port=debug_port)
             except Exception as e:
+                # Fallback: try direct kill on main process
                 try:
-                    chrome_process.kill()
+                    os.kill(chrome_pid, signal.SIGKILL)
                 except:
                     pass
-                log_error("chrome_background_cleanup_failed", error=str(e))
+                log_error("chrome_background_cleanup_failed", pid=chrome_pid, error=str(e))
 
 
 async def main():
