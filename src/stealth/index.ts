@@ -15,6 +15,7 @@ export {
 } from "./detectors.js";
 
 export {
+  detectOverlay,
   dismissAllOverlays,
   dismissCookieBanners,
   dismissPopups,

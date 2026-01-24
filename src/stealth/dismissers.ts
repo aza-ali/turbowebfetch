@@ -15,6 +15,114 @@ const CLICK_TIMEOUT = 500;
 const ATTEMPT_DELAY = 100;
 
 /**
+ * Visually detect if there's an overlay blocking content.
+ *
+ * Uses a single page.evaluate() call to check for overlay signals,
+ * avoiding the burst of parallel selector queries that can trigger anti-bot.
+ *
+ * @param page - Playwright page instance
+ * @returns true if an overlay is likely present
+ */
+export async function detectOverlay(page: Page): Promise<boolean> {
+  logger.debug('dismisser_detect_start');
+
+  try {
+    const result = await page.evaluate(() => {
+      // Check 1: Body/html scroll locked (common modal behavior)
+      const bodyStyle = window.getComputedStyle(document.body);
+      const htmlStyle = window.getComputedStyle(document.documentElement);
+      const scrollLocked =
+        bodyStyle.overflow === 'hidden' ||
+        bodyStyle.overflowY === 'hidden' ||
+        htmlStyle.overflow === 'hidden' ||
+        htmlStyle.overflowY === 'hidden';
+
+      // Check 2: Any fixed/absolute element covering significant viewport area with high z-index
+      let hasBlockingElement = false;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      // Only check elements that are likely overlays (fixed/absolute with z-index)
+      const candidates = document.querySelectorAll('[style*="position: fixed"], [style*="position: absolute"]');
+      for (const el of candidates) {
+        const style = window.getComputedStyle(el);
+        const position = style.position;
+        const zIndex = parseInt(style.zIndex) || 0;
+
+        if ((position === 'fixed' || position === 'absolute') && zIndex > 50) {
+          const rect = el.getBoundingClientRect();
+          // Check if it covers more than 40% width and 25% height
+          if (rect.width > viewportWidth * 0.4 && rect.height > viewportHeight * 0.25) {
+            // Exclude headers, navs, and legitimate fixed elements
+            const tagName = el.tagName.toLowerCase();
+            const className = (el.className || '').toString().toLowerCase();
+            if (
+              tagName !== 'header' &&
+              tagName !== 'nav' &&
+              !className.includes('header') &&
+              !className.includes('nav') &&
+              !className.includes('toolbar')
+            ) {
+              hasBlockingElement = true;
+              break;
+            }
+          }
+        }
+      }
+
+      // Check 3: Common overlay/modal/cookie classes exist and are visible
+      const overlaySelectors = [
+        '[class*="modal"]:not([style*="display: none"])',
+        '[class*="overlay"]:not([style*="display: none"])',
+        '[class*="cookie-banner"]:not([style*="display: none"])',
+        '[class*="cookie-consent"]:not([style*="display: none"])',
+        '[class*="gdpr"]:not([style*="display: none"])',
+        '[id*="cookie"]:not([style*="display: none"])',
+        '[class*="popup"]:not([style*="display: none"])',
+        '[role="dialog"]:not([style*="display: none"])',
+      ];
+
+      let hasOverlayClass = false;
+      for (const selector of overlaySelectors) {
+        try {
+          const el = document.querySelector(selector);
+          if (el) {
+            const style = window.getComputedStyle(el);
+            // Make sure it's actually visible
+            if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+              hasOverlayClass = true;
+              break;
+            }
+          }
+        } catch {
+          // Invalid selector, skip
+        }
+      }
+
+      // Check 4: Blur effect on main content
+      const hasBlur = !!document.querySelector('[style*="blur"], [class*="blur"]');
+
+      return {
+        scrollLocked,
+        hasBlockingElement,
+        hasOverlayClass,
+        hasBlur,
+        detected: scrollLocked || hasBlockingElement || hasOverlayClass || hasBlur
+      };
+    });
+
+    logger.debug('dismisser_detect_result', result);
+    return result.detected;
+  } catch (error) {
+    logger.debug('dismisser_detect_error', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    // If detection fails, assume no overlay (don't trigger dismissal burst)
+    return false;
+  }
+}
+
+/**
  * Try multiple selectors in parallel, return true if any succeeds.
  * Much faster than sequential attempts.
  */

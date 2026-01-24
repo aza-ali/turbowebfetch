@@ -30,7 +30,7 @@ import type { BrowserInstance } from "../pool/instance.js";
 import { rateLimiter } from "../rate-limit/limiter.js";
 import { extractContent } from "../content/extractor.js";
 import { logger } from "../utils/logger.js";
-import { dismissAllOverlays, triggerLazyLoading, fullScrollSimulation } from "../stealth/dismissers.js";
+import { detectOverlay, dismissAllOverlays, triggerLazyLoading, fullScrollSimulation } from "../stealth/dismissers.js";
 import { detectBlockers, detectCloudflareChallenge } from "../stealth/detectors.js";
 
 // Get timeout configuration
@@ -229,10 +229,17 @@ async function navigateAndExtractInternal(
       };
     }
 
-    // Step 3: Dismiss overlays (cookie banners, popups)
-    logger.info("step_dismiss_overlays", { url });
-    await dismissAllOverlays(page);
-    logger.info("step_dismiss_done", { url });
+    // Step 3: Detect and dismiss overlays (only if detected)
+    // Uses a single evaluate() call to detect, avoiding burst of parallel selector queries
+    logger.info("step_detect_overlay", { url });
+    const hasOverlay = await detectOverlay(page);
+    if (hasOverlay) {
+      logger.info("step_dismiss_overlays", { url, detected: true });
+      await dismissAllOverlays(page);
+      logger.info("step_dismiss_done", { url });
+    } else {
+      logger.info("step_dismiss_skipped", { url, detected: false });
+    }
 
     // Step 4: Trigger lazy loading
     logger.info("step_lazy_loading", { url, attempt });
