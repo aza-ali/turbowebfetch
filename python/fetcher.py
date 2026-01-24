@@ -2,8 +2,12 @@
 """
 TurboWebFetch Python Nodriver Fetcher
 
-This script uses Nodriver to fetch web pages with Cloudflare bypass capabilities.
+This script uses Nodriver to fetch web pages with Cloudflare and DataDome bypass capabilities.
 It's called by the Node.js MCP server as an alternative to Camoufox.
+
+Anti-bot handling:
+- Cloudflare: Detected and bypassed using cf_verify() in headed mode
+- DataDome: Detected and bypassed by retrying in headed mode with human-like behavior
 
 Outputs JSON to stdout, logs to stderr.
 """
@@ -274,6 +278,73 @@ def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = 
         return extract_text_content(html, title, inner_text)
 
 
+async def detect_datadome(page) -> bool:
+    """Detect if DataDome anti-bot challenge is present."""
+    try:
+        # Get page title first
+        title = await page.evaluate("document.title") or ""
+        title_lower = title.lower()
+
+        # Check title for DataDome block indicators
+        block_titles = [
+            "blocked",
+            "request blocked",
+            "pardon our interruption",
+        ]
+
+        for indicator in block_titles:
+            if indicator in title_lower:
+                log_info("datadome_detected_by_title", title=title, indicator=indicator)
+                return True
+
+        # Check for DataDome-specific elements
+        element_checks = [
+            "document.querySelector('iframe[src*=\"datadome\"]') !== null",
+            "document.querySelector('iframe[src*=\"captcha-delivery\"]') !== null",
+            "document.querySelector('[class*=\"datadome\"]') !== null",
+            "document.querySelector('#dd_captcha') !== null",
+            "document.querySelector('[id*=\"datadome\"]') !== null",
+        ]
+
+        for check in element_checks:
+            try:
+                result = await page.evaluate(check)
+                if result:
+                    log_info("datadome_detected_by_element", check=check)
+                    return True
+            except:
+                continue
+
+        # Check body text for DataDome block indicators
+        try:
+            body_text = await page.evaluate("document.body.innerText.substring(0, 2000)") or ""
+            body_lower = body_text.lower()
+
+            text_indicators = [
+                "request blocked",
+                "ray id",
+                "support.indeed.com",
+                "pardon our interruption",
+                "we have detected unusual traffic",
+                "blocked by datadome",
+                "your request has been blocked",
+                "automated access",
+                "captcha-delivery.com",
+            ]
+
+            for indicator in text_indicators:
+                if indicator in body_lower:
+                    log_info("datadome_detected_by_text", indicator=indicator)
+                    return True
+        except:
+            pass
+
+        return False
+    except Exception as e:
+        log_error("datadome_detection_failed", error=str(e))
+        return False
+
+
 async def detect_cloudflare(page) -> bool:
     """Detect if Cloudflare or similar challenge is present."""
     try:
@@ -525,10 +596,17 @@ async def fetch_page(
 
         # Launch browser
         # sandbox=False required on macOS, otherwise Chrome fails to start
+        # When headed, position window off-screen to avoid stealing focus
+        browser_args = []
+        if not headless:
+            browser_args = ['--window-position=-2400,-2400']
+            log_info("headed_offscreen_mode", window_position="-2400,-2400")
+
         browser = await uc.start(
             headless=headless,
             browser_executable_path=chrome_path,
             sandbox=False,
+            browser_args=browser_args,
         )
         page = await browser.get(url)
 
@@ -594,11 +672,13 @@ async def fetch_page(
                 pass
             browser = None
 
-            # Relaunch in headed mode
+            # Relaunch in headed mode (off-screen to avoid stealing focus)
+            log_info("cloudflare_headed_offscreen", window_position="-2400,-2400")
             browser = await uc.start(
                 headless=False,  # Headed mode for cf_verify
                 browser_executable_path=chrome_path,
                 sandbox=False,
+                browser_args=['--window-position=-2400,-2400'],
             )
             page = await browser.get(url)
 
@@ -641,6 +721,67 @@ async def fetch_page(
                     )
                 except:
                     human = HumanBehavior(enabled=False)
+
+        # Detect DataDome anti-bot challenge (only if not already retried for Cloudflare)
+        # DataDome is used by sites like Indeed and blocks headless browsers
+        if not cf_retry_needed:
+            is_datadome = await detect_datadome(page)
+            datadome_retry_needed = False
+
+            if is_datadome:
+                log_info("datadome_detected", url=url)
+
+                if headless:
+                    datadome_retry_needed = True
+                    log_info("datadome_retry_needed", reason="DataDome blocks headless, will retry in headed mode")
+                else:
+                    # Already in headed mode, DataDome might still block but we can't do more
+                    log_info("datadome_already_headed", reason="Already in headed mode, cannot retry")
+
+            # Retry with headed mode for DataDome (no cf_verify needed, just human behavior)
+            if datadome_retry_needed:
+                log_info("datadome_headed_retry_start", url=url)
+
+                # Close headless browser
+                try:
+                    browser.stop()
+                except:
+                    pass
+                browser = None
+
+                # Relaunch in headed mode (off-screen to avoid stealing focus)
+                log_info("datadome_headed_offscreen", window_position="-2400,-2400")
+                browser = await uc.start(
+                    headless=False,  # Headed mode for DataDome bypass
+                    browser_executable_path=chrome_path,
+                    sandbox=False,
+                    browser_args=['--window-position=-2400,-2400'],
+                )
+                page = await browser.get(url)
+
+                # Wait for page to load with human-like delay
+                await asyncio.sleep(3)
+
+                # Re-initialize human behavior for new browser
+                if human_mode:
+                    try:
+                        viewport_width = await page.evaluate("window.innerWidth") or 1920
+                        viewport_height = await page.evaluate("window.innerHeight") or 1080
+                        human = HumanBehavior(
+                            enabled=True,
+                            viewport_width=int(viewport_width),
+                            viewport_height=int(viewport_height)
+                        )
+                    except:
+                        human = HumanBehavior(enabled=False)
+
+                # Check if DataDome is still blocking
+                still_datadome = await detect_datadome(page)
+                if still_datadome:
+                    log_error("datadome_headed_retry_failed", message="Still blocked after headed retry")
+                    raise FetchError("BLOCKED", "DataDome challenge not bypassed in headed mode")
+                else:
+                    log_info("datadome_bypassed", url=url)
 
         # Wait for specific selector if requested
         if wait_for:
