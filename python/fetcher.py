@@ -17,9 +17,12 @@ import asyncio
 import json
 import os
 import platform
+import random
+import socket
+import subprocess
 import sys
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
 
 import nodriver as uc
@@ -190,12 +193,194 @@ def get_chrome_path() -> Optional[str]:
     return None
 
 
+def find_available_port(start: int = 9222, end: int = 9322) -> int:
+    """Find an available port for Chrome remote debugging."""
+    # Try random ports in range to avoid conflicts with parallel agents
+    ports = list(range(start, end))
+    random.shuffle(ports)
+
+    for port in ports:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+
+    raise FetchError("PORT_EXHAUSTED", f"No available ports in range {start}-{end}")
+
+
+async def launch_chrome_background_macos(
+    chrome_path: str,
+    url: str,
+    port: int,
+    user_data_dir: Optional[str] = None,
+) -> subprocess.Popen:
+    """
+    Launch Chrome in background mode on macOS using 'open -gj'.
+
+    This launches Chrome hidden (no window visible) and without stealing focus.
+
+    Args:
+        chrome_path: Path to Chrome executable (used to find the .app bundle)
+        url: Initial URL to open
+        port: Remote debugging port
+        user_data_dir: Optional user data directory
+
+    Returns:
+        Popen process object
+    """
+    # Build Chrome arguments
+    chrome_args = [
+        f'--remote-debugging-port={port}',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        '--disable-client-side-phishing-detection',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-hang-monitor',
+        '--disable-popup-blocking',
+        '--disable-prompt-on-repost',
+        '--disable-sync',
+        '--disable-translate',
+        '--metrics-recording-only',
+        '--safebrowsing-disable-auto-update',
+        '--password-store=basic',
+    ]
+
+    if user_data_dir:
+        chrome_args.append(f'--user-data-dir={user_data_dir}')
+    else:
+        # Create a temp directory for this session
+        import tempfile
+        temp_dir = tempfile.mkdtemp(prefix='turbowebfetch_chrome_')
+        chrome_args.append(f'--user-data-dir={temp_dir}')
+
+    # Add the URL last
+    chrome_args.append(url)
+
+    # On macOS, derive the .app bundle path from the executable path
+    # /Applications/Google Chrome.app/Contents/MacOS/Google Chrome -> /Applications/Google Chrome.app
+    app_path = chrome_path
+    if '/Contents/MacOS/' in chrome_path:
+        app_path = chrome_path.split('/Contents/MacOS/')[0]
+
+    # Use 'open' command with -gj flags:
+    # -g: Do not bring the application to the foreground
+    # -j: Launches the app hidden
+    # -n: Open a new instance even if one is running
+    # -a: Specify application to open
+    # --args: Pass remaining arguments to the application
+    cmd = [
+        'open',
+        '-g',  # Background (don't bring to foreground)
+        '-j',  # Hidden (launch hidden)
+        '-n',  # New instance
+        '-a', app_path,
+        '--args',
+    ] + chrome_args
+
+    log_info("chrome_background_launch", cmd=' '.join(cmd[:7]) + ' --args [...]', port=port)
+
+    # Launch Chrome
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait for Chrome to start and open the debugging port
+    max_wait = 10  # seconds
+    waited = 0
+    while waited < max_wait:
+        await asyncio.sleep(0.5)
+        waited += 0.5
+
+        # Check if port is accepting connections
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                s.connect(('127.0.0.1', port))
+                log_info("chrome_background_ready", port=port, waited_seconds=waited)
+                return process
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            continue
+
+    # If we get here, Chrome didn't start properly
+    process.kill()
+    raise FetchError("BROWSER_LAUNCH_FAILED", f"Chrome didn't open debugging port {port} within {max_wait}s")
+
+
 class FetchError(Exception):
     """Custom exception for fetch errors with error codes."""
     def __init__(self, code: str, message: str):
         self.code = code
         self.message = message
         super().__init__(message)
+
+
+async def start_headed_browser(
+    chrome_path: Optional[str],
+    url: str,
+) -> Tuple[Any, Any, Optional[subprocess.Popen], Optional[int]]:
+    """
+    Start a headed browser, using background mode on macOS.
+
+    On macOS: Uses 'open -gj' to launch Chrome hidden without stealing focus,
+    then connects nodriver to it via remote debugging port.
+
+    On other platforms: Falls back to direct launch with off-screen positioning.
+
+    Args:
+        chrome_path: Path to Chrome executable
+        url: URL to navigate to
+
+    Returns:
+        Tuple of (browser, page, chrome_process, debug_port)
+        chrome_process and debug_port are only set on macOS background mode
+    """
+    system = platform.system()
+
+    if system == "Darwin" and chrome_path:
+        # macOS: Use background app mode
+        port = find_available_port()
+        log_info("headed_background_mode", platform="macOS", port=port)
+
+        # Launch Chrome in background
+        chrome_process = await launch_chrome_background_macos(
+            chrome_path=chrome_path,
+            url=url,
+            port=port,
+        )
+
+        # Connect nodriver to the existing Chrome
+        # When host and port are provided, nodriver doesn't launch its own browser
+        browser = await uc.start(
+            host='127.0.0.1',
+            port=port,
+            sandbox=False,
+        )
+
+        # Get the page (should already be at the URL)
+        # nodriver's browser.get() with an existing browser just switches to/opens a tab
+        pages = await browser.get(url)
+        page = pages
+
+        return browser, page, chrome_process, port
+    else:
+        # Other platforms: Use off-screen positioning fallback
+        log_info("headed_offscreen_mode", platform=system, window_position="-2400,-2400")
+
+        browser = await uc.start(
+            headless=False,
+            browser_executable_path=chrome_path,
+            sandbox=False,
+            browser_args=['--window-position=-2400,-2400'],
+        )
+        page = await browser.get(url)
+
+        return browser, page, None, None
 
 
 def log_error(message: str, **kwargs):
@@ -577,6 +762,8 @@ async def fetch_page(
         Dict with success, content, url, title, status
     """
     browser = None
+    chrome_process = None  # For macOS background mode cleanup
+    debug_port = None  # For macOS background mode
     start_time = time.time()
 
     try:
@@ -672,15 +859,11 @@ async def fetch_page(
                 pass
             browser = None
 
-            # Relaunch in headed mode (off-screen to avoid stealing focus)
-            log_info("cloudflare_headed_offscreen", window_position="-2400,-2400")
-            browser = await uc.start(
-                headless=False,  # Headed mode for cf_verify
-                browser_executable_path=chrome_path,
-                sandbox=False,
-                browser_args=['--window-position=-2400,-2400'],
+            # Relaunch in headed mode (background on macOS, off-screen on others)
+            browser, page, chrome_process, debug_port = await start_headed_browser(
+                chrome_path=chrome_path,
+                url=url,
             )
-            page = await browser.get(url)
 
             # Wait for page to load
             await asyncio.sleep(2)
@@ -749,15 +932,11 @@ async def fetch_page(
                     pass
                 browser = None
 
-                # Relaunch in headed mode (off-screen to avoid stealing focus)
-                log_info("datadome_headed_offscreen", window_position="-2400,-2400")
-                browser = await uc.start(
-                    headless=False,  # Headed mode for DataDome bypass
-                    browser_executable_path=chrome_path,
-                    sandbox=False,
-                    browser_args=['--window-position=-2400,-2400'],
+                # Relaunch in headed mode (background on macOS, off-screen on others)
+                browser, page, chrome_process, debug_port = await start_headed_browser(
+                    chrome_path=chrome_path,
+                    url=url,
                 )
-                page = await browser.get(url)
 
                 # Wait for page to load with human-like delay
                 await asyncio.sleep(3)
@@ -887,6 +1066,19 @@ async def fetch_page(
                 browser.stop()  # Note: stop() is not async
             except Exception as e:
                 log_error("browser_cleanup_failed", error=str(e))
+
+        # Clean up Chrome process if launched in background mode (macOS)
+        if chrome_process:
+            try:
+                chrome_process.terminate()
+                chrome_process.wait(timeout=5)
+                log_info("chrome_background_cleanup", port=debug_port)
+            except Exception as e:
+                try:
+                    chrome_process.kill()
+                except:
+                    pass
+                log_error("chrome_background_cleanup_failed", error=str(e))
 
 
 async def main():
