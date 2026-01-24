@@ -618,11 +618,16 @@ async def fetch_page(
 
                     # Verify we passed
                     if await detect_cloudflare(page):
-                        log_info("cloudflare_cf_verify_failed", message="Still on challenge after cf_verify")
+                        log_error("cloudflare_cf_verify_failed", message="Still on challenge after cf_verify")
+                        # Return error - don't continue extracting challenge page content
+                        raise FetchError("BLOCKED", "Cloudflare challenge not bypassed after cf_verify")
                     else:
                         log_info("cloudflare_bypassed", url=url)
+                except FetchError:
+                    raise  # Re-raise our own errors
                 except Exception as cf_err:
                     log_error("cloudflare_cf_verify_error", error=str(cf_err))
+                    raise FetchError("BLOCKED", f"Cloudflare bypass failed: {cf_err}")
 
             # Re-initialize human behavior for new browser
             if human_mode:
