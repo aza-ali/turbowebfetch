@@ -22,7 +22,13 @@
     "browser-rendering",
     "parallel-fetch",
     "claude-code",
-    "model-context-protocol"
+    "model-context-protocol",
+    "nodriver",
+    "cloudflare-bypass",
+    "datadome-bypass",
+    "anti-bot",
+    "stealth",
+    "undetected-browser"
   ],
   "author": "Mourtaza Ali <aza.a.ali@gmail.com> (https://mourtaza.com)",
   "license": "MIT",

@@ -14,25 +14,35 @@ Regular WebFetch fails on modern sites because it's just HTTP - no JavaScript, n
 
 ## Works Where Vanilla Automation Fails
 
-Most Playwright tools ship with detectable automation fingerprints. TurboWebFetch uses properly configured browsers with realistic behavior - so you get content from sites that block obvious automation. Cookie banners dismissed. Popups handled. Clean content returned.
+Most automation tools ship with detectable fingerprints. TurboWebFetch uses Nodriver (undetected Chrome) with realistic human-like behavior - so you get content from sites that block obvious automation.
+
+**Auto-bypasses anti-bot protection:**
+- **Cloudflare** - Auto-detects challenges, retries in headed mode, clicks verification
+- **DataDome** - Auto-detects blocks (Indeed, etc.), retries with human behavior
+
+**On macOS:** Headed retries run in background - Chrome launches hidden without stealing focus or appearing on screen. Your workflow stays uninterrupted.
 
 | Capability | TurboWebFetch | fetcher-mcp | concurrent-browser-mcp |
 |------------|---------------|-------------|------------------------|
 | Parallel browsers | ✅ | ✅ | ✅ |
 | JS rendering | ✅ | ✅ | ✅ |
+| Cloudflare bypass | ✅ | ❌ | ❌ |
+| DataDome bypass | ✅ | ❌ | ❌ |
 | Realistic browser config | ✅ | ❌ | ❌ |
 | Cookie banner handling | ✅ | ❌ | ❌ |
-| Popup/overlay dismissal | ✅ | ❌ | ❌ |
-| Retry with escalation | ✅ | ❌ | ❌ |
+| Human-like scrolling | ✅ | ❌ | ❌ |
+| Background headed mode | ✅ | ❌ | ❌ |
 
 ## Installation
+
+**Requirements:** Node.js 18+, Python 3.8+, Google Chrome installed
 
 ```bash
 # Clone and build
 git clone https://github.com/aza-ali/turbowebfetch.git
 cd turbowebfetch
 npm install
-npx playwright install chromium
+npm run setup:python    # Install Python/Nodriver dependencies
 npm run build
 
 # Register with Claude Code
@@ -66,9 +76,9 @@ Fetches up to 14 URLs simultaneously.
 ## Use Cases
 
 - **Multi-agent research** - 10 agents gathering info from 10 sources, all at once
-- **Job search** - Parse postings from Greenhouse, Lever, LinkedIn in parallel
+- **Job search** - Parse postings from Indeed, Glassdoor, Greenhouse, Lever, LinkedIn in parallel
 - **Documentation** - Read JS-heavy docs (React, Next.js, Stripe) that WebFetch can't render
-- **Content aggregation** - Check multiple sites simultaneously
+- **Protected sites** - Access content behind Cloudflare/DataDome that blocks other tools
 
 ## Configuration
 
@@ -76,9 +86,11 @@ Environment variables (optional):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TURBO_FETCH_MIN_POOL` | 2 | Minimum browser instances |
-| `TURBO_FETCH_MAX_POOL` | 14 | Maximum browser instances |
-| `TURBO_FETCH_HEADLESS` | true | Run browsers headless |
+| `TURBOFETCH_MAX_PROCESSES` | 14 | Maximum concurrent browser processes |
+| `TURBOFETCH_HEADLESS` | true | Run browsers headless (auto-switches to headed for anti-bot) |
+| `TURBOFETCH_HUMAN_MODE` | true | Enable human-like scrolling/delays |
+| `TURBOFETCH_NAV_TIMEOUT` | 30000 | Navigation timeout (ms) |
+| `TURBOFETCH_DEFAULT_RPM` | 60 | Rate limit per domain (requests/minute) |
 
 ## License
 
