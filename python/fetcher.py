@@ -275,22 +275,70 @@ def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = 
 
 
 async def detect_cloudflare(page) -> bool:
-    """Detect if Cloudflare challenge is present."""
+    """Detect if Cloudflare or similar challenge is present."""
     try:
-        # Check for common Cloudflare challenge indicators
-        checks = [
-            "document.title.includes('Just a moment')",
-            "document.title.includes('Cloudflare')",
-            "document.querySelector('#cf-wrapper') !== null",
-            "document.querySelector('.cf-browser-verification') !== null",
-            "document.body.innerText.includes('Checking your browser')",
-            "document.body.innerText.includes('DDoS protection by Cloudflare')",
+        # Get page title first
+        title = await page.evaluate("document.title") or ""
+        title_lower = title.lower()
+
+        # Check title for challenge indicators
+        challenge_titles = [
+            "just a moment",
+            "cloudflare",
+            "checking your browser",
+            "please wait",
+            "verify you are human",
+            "attention required",
+            "access denied",
+            "one moment",
+            "hold on",
+            "security check",
         ]
 
-        for check in checks:
-            result = await page.evaluate(check)
-            if result:
+        for indicator in challenge_titles:
+            if indicator in title_lower:
+                log_info("cloudflare_detected_by_title", title=title, indicator=indicator)
                 return True
+
+        # Check for common challenge page elements
+        element_checks = [
+            "document.querySelector('#cf-wrapper') !== null",
+            "document.querySelector('.cf-browser-verification') !== null",
+            "document.querySelector('#challenge-running') !== null",
+            "document.querySelector('#challenge-form') !== null",
+            "document.querySelector('[class*=\"challenge\"]') !== null",
+            "document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]') !== null",
+        ]
+
+        for check in element_checks:
+            try:
+                result = await page.evaluate(check)
+                if result:
+                    log_info("cloudflare_detected_by_element", check=check)
+                    return True
+            except:
+                continue
+
+        # Check body text for challenge indicators
+        try:
+            body_text = await page.evaluate("document.body.innerText.substring(0, 1000)") or ""
+            body_lower = body_text.lower()
+
+            text_indicators = [
+                "checking your browser",
+                "ddos protection",
+                "verify you are human",
+                "please verify",
+                "help us protect",
+                "security check",
+            ]
+
+            for indicator in text_indicators:
+                if indicator in body_lower:
+                    log_info("cloudflare_detected_by_text", indicator=indicator)
+                    return True
+        except:
+            pass
 
         return False
     except Exception as e:
@@ -501,17 +549,93 @@ async def fetch_page(
                 log_info("human_mode_init_failed", error=str(e))
                 human = HumanBehavior(enabled=False)
 
-        # Detect Cloudflare
+        # Detect and wait for Cloudflare JS challenge to auto-pass
         is_cloudflare = await detect_cloudflare(page)
+        cf_retry_needed = False
+
         if is_cloudflare:
             log_info("cloudflare_detected", url=url)
-            # Use Nodriver's built-in Cloudflare bypass
+
+            # Wait for Cloudflare JS challenge to complete (up to 10 seconds)
+            max_cf_wait = 10
+            cf_check_interval = 2
+            cf_waited = 0
+
+            while cf_waited < max_cf_wait:
+                await asyncio.sleep(cf_check_interval)
+                cf_waited += cf_check_interval
+
+                # Check if still on Cloudflare challenge
+                still_cloudflare = await detect_cloudflare(page)
+                if not still_cloudflare:
+                    log_info("cloudflare_passed", waited_seconds=cf_waited)
+                    break
+
+                log_info("cloudflare_waiting", waited_seconds=cf_waited, max_wait=max_cf_wait)
+
+            # If still on Cloudflare after waiting, need headed retry with cf_verify
+            still_cf = await detect_cloudflare(page)
+            log_info("cloudflare_check_after_wait", cf_waited=cf_waited, max_cf_wait=max_cf_wait, still_cloudflare=still_cf, headless=headless)
+            if cf_waited >= max_cf_wait and still_cf:
+                if headless:
+                    cf_retry_needed = True
+                    log_info("cloudflare_retry_needed", reason="JS challenge didn't pass, will retry headed with cf_verify")
+                else:
+                    log_info("cloudflare_already_headed", reason="Already in headed mode, cannot retry")
+
+        # Retry with headed mode + cf_verify() if needed
+        if cf_retry_needed:
+            log_info("cloudflare_headed_retry_start", url=url)
+
+            # Close headless browser
             try:
-                await page  # Nodriver handles CF challenges automatically
-                # Wait a bit longer after CF bypass
-                await asyncio.sleep(2)
-            except Exception as e:
-                log_error("cloudflare_bypass_failed", error=str(e))
+                browser.stop()
+            except:
+                pass
+            browser = None
+
+            # Relaunch in headed mode
+            browser = await uc.start(
+                headless=False,  # Headed mode for cf_verify
+                browser_executable_path=chrome_path,
+                sandbox=False,
+            )
+            page = await browser.get(url)
+
+            # Wait for page to load
+            await asyncio.sleep(2)
+
+            # Check if still Cloudflare (it should be)
+            if await detect_cloudflare(page):
+                log_info("cloudflare_cf_verify_attempt", url=url)
+                try:
+                    # Use nodriver's built-in Cloudflare bypass (clicks the checkbox)
+                    await page.verify_cf()
+                    log_info("cloudflare_cf_verify_success", url=url)
+
+                    # Wait for redirect after verification
+                    await asyncio.sleep(3)
+
+                    # Verify we passed
+                    if await detect_cloudflare(page):
+                        log_info("cloudflare_cf_verify_failed", message="Still on challenge after cf_verify")
+                    else:
+                        log_info("cloudflare_bypassed", url=url)
+                except Exception as cf_err:
+                    log_error("cloudflare_cf_verify_error", error=str(cf_err))
+
+            # Re-initialize human behavior for new browser
+            if human_mode:
+                try:
+                    viewport_width = await page.evaluate("window.innerWidth") or 1920
+                    viewport_height = await page.evaluate("window.innerHeight") or 1080
+                    human = HumanBehavior(
+                        enabled=True,
+                        viewport_width=int(viewport_width),
+                        viewport_height=int(viewport_height)
+                    )
+                except:
+                    human = HumanBehavior(enabled=False)
 
         # Wait for specific selector if requested
         if wait_for:
