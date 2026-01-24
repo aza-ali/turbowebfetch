@@ -107,6 +107,7 @@ export class BrowserInstance {
 
     const browser = await chromium.launch({
       headless: mergedConfig.headless,
+      channel: 'chrome',  // Use real Chrome instead of Chromium - harder to detect
       args: mergedConfig.launchArgs
     });
 
