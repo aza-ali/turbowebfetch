@@ -57,6 +57,11 @@ const FETCH_TOOL: Tool = {
         default: 30000,
         description: "Timeout in milliseconds (default: 30000, max: 120000)",
       },
+      human_mode: {
+        type: "boolean",
+        description:
+          "Enable human-mode scrolling and delays for more natural browsing behavior (default: true)",
+      },
     },
     required: ["url"],
   },
@@ -89,6 +94,11 @@ const FETCH_BATCH_TOOL: Tool = {
         type: "number",
         default: 30000,
         description: "Timeout in milliseconds per URL (default: 30000)",
+      },
+      human_mode: {
+        type: "boolean",
+        description:
+          "Enable human-mode scrolling and delays for more natural browsing behavior (default: true)",
       },
     },
     required: ["urls"],

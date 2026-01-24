@@ -27,6 +27,7 @@ import {
 } from "../types.js";
 import { rateLimiter } from "../rate-limit/limiter.js";
 import { logger } from "../utils/logger.js";
+import { config as appConfig } from "../utils/config.js";
 
 // Get the directory of this file
 const __filename = fileURLToPath(import.meta.url);
@@ -47,21 +48,27 @@ const config = getDefaultConfig();
  * @param format - Output format (html, text, markdown)
  * @param timeout - Navigation timeout in milliseconds
  * @param waitFor - Optional CSS selector to wait for
+ * @param humanMode - Enable human-mode scrolling and delays (defaults to config value)
  * @returns Raw page content or error
  */
 async function callPythonFetcher(
   url: string,
   format: ContentFormat,
   timeout: number,
-  waitFor?: string
+  waitFor?: string,
+  humanMode?: boolean
 ): Promise<RawPageContent> {
   return new Promise((resolve) => {
+    // Use passed value if defined, otherwise fall back to config
+    const useHumanMode = humanMode ?? appConfig.browser.humanMode;
+
     const args = [
       PYTHON_SCRIPT,
       "--url", url,
       "--format", format,
       "--timeout", timeout.toString(),
       "--headless", "true",
+      "--human-mode", useHumanMode.toString(),
     ];
 
     if (waitFor) {
@@ -228,6 +235,7 @@ async function fetchWithRetry(
   format: ContentFormat,
   timeout: number,
   waitFor?: string,
+  humanMode?: boolean,
   maxRetries = 3
 ): Promise<RawPageContent> {
   let lastResult: RawPageContent | null = null;
@@ -235,7 +243,7 @@ async function fetchWithRetry(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     logger.info("retry_fetch_start", { url, attempt, max_retries: maxRetries });
 
-    const result = await callPythonFetcher(url, format, timeout, waitFor);
+    const result = await callPythonFetcher(url, format, timeout, waitFor, humanMode);
 
     // Success - return result
     if (!result.error || result.html.length > 100) {
@@ -290,7 +298,7 @@ async function fetchWithRetry(
  */
 export async function fetchPage(options: FetchOptions): Promise<FetchResponse> {
   const startTime = Date.now();
-  const { url, format, wait_for, timeout } = options;
+  const { url, format, wait_for, timeout, human_mode } = options;
   const domain = extractDomain(url);
 
   logger.info("fetch_start", { url, format, domain });
@@ -303,7 +311,7 @@ export async function fetchPage(options: FetchOptions): Promise<FetchResponse> {
 
     // Step 3: Call Python fetcher with retry logic
     logger.info("step_python_fetch", { elapsed: Date.now() - startTime });
-    const rawContent = await fetchWithRetry(url, format as ContentFormat, timeout, wait_for);
+    const rawContent = await fetchWithRetry(url, format as ContentFormat, timeout, wait_for, human_mode);
     logger.info("step_python_fetch_done", { elapsed: Date.now() - startTime });
 
     // Check for errors with no content
@@ -363,6 +371,7 @@ export async function fetch(
     format?: ContentFormat;
     wait_for?: string;
     timeout?: number;
+    human_mode?: boolean;
   } = {}
 ): Promise<FetchResponse> {
   return fetchPage({
@@ -370,5 +379,6 @@ export async function fetch(
     format: options.format ?? "text",
     wait_for: options.wait_for,
     timeout: options.timeout ?? config.timeouts.navigation,
+    human_mode: options.human_mode,
   });
 }

@@ -26,6 +26,7 @@ export const FetchOptionsSchema = z.object({
   format: ContentFormatSchema.optional().default("text"),
   wait_for: z.string().optional(),
   timeout: z.number().int().positive().max(120000).optional().default(30000),
+  human_mode: z.boolean().optional(),
 });
 
 export type FetchOptions = z.infer<typeof FetchOptionsSchema>;
@@ -40,6 +41,7 @@ export const FetchBatchOptionsSchema = z.object({
     .max(14, "Maximum 14 URLs per batch"),
   format: ContentFormatSchema.optional().default("text"),
   timeout: z.number().int().positive().max(120000).optional().default(30000),
+  human_mode: z.boolean().optional(),
 });
 
 export type FetchBatchOptions = z.infer<typeof FetchBatchOptionsSchema>;

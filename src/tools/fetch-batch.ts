@@ -45,7 +45,7 @@ export async function fetchBatch(
   options: FetchBatchOptions
 ): Promise<FetchBatchResult> {
   const startTime = Date.now();
-  const { urls, format, timeout } = options;
+  const { urls, format, timeout, human_mode } = options;
   const total = urls.length;
 
   logger.info("batch_fetch_start", {
@@ -108,6 +108,7 @@ export async function fetchBatch(
             url,
             format: format as ContentFormat,
             timeout,
+            human_mode,
           });
         } catch (error) {
           // This shouldn't happen as fetchPage handles errors internally,
@@ -177,12 +178,14 @@ export async function fetchMultiple(
   options: {
     format?: ContentFormat;
     timeout?: number;
+    human_mode?: boolean;
   } = {}
 ): Promise<FetchBatchResult> {
   return fetchBatch({
     urls,
     format: options.format ?? "text",
     timeout: options.timeout ?? config.timeouts.navigation,
+    human_mode: options.human_mode,
   });
 }
 
@@ -193,7 +196,7 @@ export async function fetchBatchWithProgress(
   options: FetchBatchOptions,
   onProgress?: (completed: number, total: number) => void
 ): Promise<FetchBatchResult> {
-  const { urls, format, timeout } = options;
+  const { urls, format, timeout, human_mode } = options;
   const total = urls.length;
 
   if (total === 0) {
@@ -220,6 +223,7 @@ export async function fetchBatchWithProgress(
           url,
           format: format as ContentFormat,
           timeout,
+          human_mode,
         })
       )
     );

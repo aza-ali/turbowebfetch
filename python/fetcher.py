@@ -22,6 +22,135 @@ import nodriver as uc
 from readability import Document
 from markdownify import markdownify as md
 
+# Human behavior modules (optional - graceful degradation if not available)
+HUMAN_MODULES_AVAILABLE = False
+try:
+    from human_mouse import generate_path, get_random_start, create_mouse_movement
+    from human_timing import reading_delay, thinking_delay, scroll_pause
+    from human_scroll import generate_scroll_sequence, generate_lazy_load_sequence
+    HUMAN_MODULES_AVAILABLE = True
+except ImportError as e:
+    # Log at module load time - will be reported when used
+    pass
+
+
+class HumanBehavior:
+    """
+    Wrapper class for human-like browser behavior.
+
+    Provides methods for:
+    - Natural mouse movements (bezier curves with jitter)
+    - Gaussian-distributed timing delays
+    - Human-like scrolling patterns
+
+    Falls back to simple behavior if human modules are not available.
+    """
+
+    def __init__(self, enabled: bool = True, viewport_width: int = 1920, viewport_height: int = 1080):
+        """
+        Initialize human behavior wrapper.
+
+        Args:
+            enabled: Whether to use human-like behavior (if modules available)
+            viewport_width: Browser viewport width for mouse calculations
+            viewport_height: Browser viewport height for mouse calculations
+        """
+        self.enabled = enabled and HUMAN_MODULES_AVAILABLE
+        self.viewport_width = viewport_width
+        self.viewport_height = viewport_height
+        self._last_mouse_pos = None
+
+        if enabled and not HUMAN_MODULES_AVAILABLE:
+            log_info("human_mode_fallback", reason="human behavior modules not available")
+
+    def get_reading_delay(self, content_length: Optional[int] = None) -> float:
+        """Get delay for reading/scanning page content."""
+        if self.enabled:
+            return reading_delay(content_length=content_length, min_seconds=1.5, max_seconds=3.5)
+        return 1.0  # Simple fallback
+
+    def get_thinking_delay(self, complexity: str = "simple") -> float:
+        """Get delay before taking an action (cognitive processing time)."""
+        if self.enabled:
+            return thinking_delay(complexity=complexity)
+        return 0.3  # Simple fallback
+
+    def get_scroll_pause(self, position: str = "middle") -> float:
+        """Get pause duration during scrolling."""
+        if self.enabled:
+            return scroll_pause(position=position)
+        return 0.5  # Simple fallback
+
+    def generate_mouse_path(self, end_x: float, end_y: float) -> list:
+        """
+        Generate a human-like mouse movement path to target coordinates.
+
+        Args:
+            end_x: Target X coordinate
+            end_y: Target Y coordinate
+
+        Returns:
+            List of (x, y) points along the path
+        """
+        if not self.enabled:
+            return [(end_x, end_y)]
+
+        # Get or generate starting position
+        if self._last_mouse_pos is None:
+            start = get_random_start(self.viewport_width, self.viewport_height)
+        else:
+            start = self._last_mouse_pos
+
+        # Generate movement
+        movement = create_mouse_movement(start[0], start[1], end_x, end_y)
+        path = movement['path']
+
+        # Update last known position
+        self._last_mouse_pos = (end_x, end_y)
+
+        return path
+
+    def get_mouse_step_delay(self, path_length: int, duration_ms: float = 800) -> float:
+        """
+        Get delay between mouse movement steps.
+
+        Args:
+            path_length: Number of points in the path
+            duration_ms: Total movement duration in milliseconds
+
+        Returns:
+            Delay in seconds between each step
+        """
+        if not self.enabled or path_length < 2:
+            return 0.01
+
+        from human_mouse import calculate_step_delay
+        return calculate_step_delay(duration_ms, path_length)
+
+    def generate_scroll_sequence(self, page_height: int, viewport_height: int, for_lazy_load: bool = False) -> list:
+        """
+        Generate a human-like scroll sequence.
+
+        Args:
+            page_height: Total page height in pixels
+            viewport_height: Visible viewport height in pixels
+            for_lazy_load: If True, optimized for triggering lazy content
+
+        Returns:
+            List of scroll actions with positions and delays
+        """
+        if not self.enabled:
+            # Simple fallback: three scroll positions
+            max_scroll = max(0, page_height - viewport_height)
+            return [
+                {'scroll_to': max_scroll // 2, 'delay_after': 0.5, 'smooth': True},
+                {'scroll_to': max_scroll, 'delay_after': 0.5, 'smooth': True},
+            ]
+
+        if for_lazy_load:
+            return generate_lazy_load_sequence(page_height, viewport_height)
+        return generate_scroll_sequence(page_height, viewport_height)
+
 
 def get_chrome_path() -> Optional[str]:
     """Get Chrome executable path for the current platform."""
@@ -169,8 +298,14 @@ async def detect_cloudflare(page) -> bool:
         return False
 
 
-async def dismiss_overlays(page):
-    """Dismiss common overlay elements (cookie banners, popups)."""
+async def dismiss_overlays(page, human: Optional[HumanBehavior] = None):
+    """
+    Dismiss common overlay elements (cookie banners, popups).
+
+    Args:
+        page: Nodriver page object
+        human: Optional HumanBehavior instance for natural interactions
+    """
     try:
         # Common overlay selectors
         selectors = [
@@ -189,6 +324,31 @@ async def dismiss_overlays(page):
                 # Try to find and click the element
                 element = await page.find(selector, timeout=1)
                 if element:
+                    # Add thinking delay before clicking (human hesitation)
+                    if human:
+                        delay = human.get_thinking_delay(complexity="simple")
+                        await asyncio.sleep(delay)
+
+                        # Get element bounding box for mouse movement
+                        try:
+                            box = await element.get_position()
+                            if box:
+                                # Generate mouse path to element center
+                                center_x = box.x + box.width / 2
+                                center_y = box.y + box.height / 2
+                                path = human.generate_mouse_path(center_x, center_y)
+
+                                # Execute mouse movement (simulate via JS for stealth)
+                                if len(path) > 1:
+                                    step_delay = human.get_mouse_step_delay(len(path))
+                                    for x, y in path[:-1]:  # Skip last point, we'll click there
+                                        await page.evaluate(f"""
+                                            document.elementFromPoint({x}, {y});
+                                        """)
+                                        await asyncio.sleep(step_delay)
+                        except Exception as mouse_err:
+                            log_info("mouse_movement_skipped", error=str(mouse_err))
+
                     await element.click()
                     await asyncio.sleep(0.5)
                     log_info("overlay_dismissed", selector=selector)
@@ -199,22 +359,80 @@ async def dismiss_overlays(page):
         log_error("overlay_dismissal_failed", error=str(e))
 
 
-async def lazy_load_content(page):
-    """Scroll page to trigger lazy-loaded content."""
+async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
+    """
+    Scroll page to trigger lazy-loaded content using human-like behavior.
+
+    Args:
+        page: Nodriver page object
+        human: Optional HumanBehavior instance for natural scrolling
+    """
     try:
+        # Get page dimensions (Nodriver evaluate returns primitives directly)
+        page_height = await page.evaluate("""
+            Math.max(
+                document.body.scrollHeight,
+                document.documentElement.scrollHeight
+            )
+        """) or 3000
+        viewport_height = await page.evaluate("window.innerHeight") or 800
+
+        page_height = int(page_height)
+        viewport_height = int(viewport_height)
+
+        log_info("lazy_load_start", page_height=page_height, viewport_height=viewport_height)
+
+        # Generate scroll sequence using HumanBehavior or fallback
+        if human:
+            scroll_sequence = human.generate_scroll_sequence(page_height, viewport_height, for_lazy_load=True)
+        else:
+            # Simple fallback sequence
+            max_scroll = max(0, page_height - viewport_height)
+            scroll_sequence = [
+                {'scroll_to': max_scroll // 2, 'delay_after': 0.5, 'smooth': True},
+                {'scroll_to': max_scroll, 'delay_after': 0.5, 'smooth': True},
+            ]
+
+        # Execute scroll sequence
+        for action in scroll_sequence:
+            scroll_to = action['scroll_to']
+            delay = action['delay_after']
+            smooth = action.get('smooth', True)
+
+            if smooth:
+                await page.evaluate(f"""
+                    window.scrollTo({{
+                        top: {scroll_to},
+                        behavior: 'smooth'
+                    }});
+                """)
+            else:
+                await page.evaluate(f"window.scrollTo(0, {scroll_to});")
+
+            await asyncio.sleep(delay)
+
+        # Scroll back to top
         await page.evaluate("""
-            window.scrollTo(0, document.body.scrollHeight / 2);
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
         """)
-        await asyncio.sleep(0.5)
-        await page.evaluate("""
-            window.scrollTo(0, document.body.scrollHeight);
-        """)
-        await asyncio.sleep(0.5)
-        await page.evaluate("""
-            window.scrollTo(0, 0);
-        """)
+        await asyncio.sleep(0.3)
+
+        log_info("lazy_load_complete", scroll_actions=len(scroll_sequence))
+
     except Exception as e:
         log_error("lazy_load_failed", error=str(e))
+        # Final fallback if everything fails
+        try:
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2);")
+            await asyncio.sleep(0.5)
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+            await asyncio.sleep(0.5)
+            await page.evaluate("window.scrollTo(0, 0);")
+        except Exception as fallback_err:
+            log_error("lazy_load_fallback_failed", error=str(fallback_err))
 
 
 async def fetch_page(
@@ -223,9 +441,18 @@ async def fetch_page(
     timeout: int = 30000,
     wait_for: Optional[str] = None,
     headless: bool = True,
+    human_mode: bool = True,
 ) -> Dict[str, Any]:
     """
     Fetch a web page using Nodriver.
+
+    Args:
+        url: URL to fetch
+        format: Output format - "text", "markdown", or "html"
+        timeout: Timeout in milliseconds
+        wait_for: Optional CSS selector to wait for
+        headless: Run browser in headless mode
+        human_mode: Enable human-like behavior (delays, mouse movements, scrolling)
 
     Returns:
         Dict with success, content, url, title, status
@@ -239,7 +466,7 @@ async def fetch_page(
         if not parsed.scheme or not parsed.netloc:
             raise FetchError("INVALID_URL", f"Invalid URL format: {url}")
 
-        log_info("fetch_start", url=url, format=format, headless=headless)
+        log_info("fetch_start", url=url, format=format, headless=headless, human_mode=human_mode)
 
         # Get Chrome path
         chrome_path = get_chrome_path()
@@ -256,6 +483,23 @@ async def fetch_page(
             sandbox=False,
         )
         page = await browser.get(url)
+
+        # Initialize human behavior wrapper (after browser starts, we can get viewport)
+        human: Optional[HumanBehavior] = None
+        if human_mode:
+            try:
+                # Nodriver returns lists from evaluate, so get width/height separately
+                viewport_width = await page.evaluate("window.innerWidth") or 1920
+                viewport_height = await page.evaluate("window.innerHeight") or 1080
+                human = HumanBehavior(
+                    enabled=True,
+                    viewport_width=int(viewport_width),
+                    viewport_height=int(viewport_height)
+                )
+                log_info("human_mode_enabled", viewport_width=viewport_width, viewport_height=viewport_height, modules_available=HUMAN_MODULES_AVAILABLE)
+            except Exception as e:
+                log_info("human_mode_init_failed", error=str(e))
+                human = HumanBehavior(enabled=False)
 
         # Detect Cloudflare
         is_cloudflare = await detect_cloudflare(page)
@@ -280,11 +524,22 @@ async def fetch_page(
             # Default wait for page to be somewhat loaded
             await asyncio.sleep(1)
 
-        # Dismiss overlays
-        await dismiss_overlays(page)
+        # Add reading delay after navigation (human takes time to see page)
+        if human:
+            reading_time = human.get_reading_delay()
+            log_info("reading_delay", seconds=round(reading_time, 2))
+            await asyncio.sleep(reading_time)
 
-        # Lazy load content
-        await lazy_load_content(page)
+        # Add thinking delay before taking actions
+        if human:
+            think_time = human.get_thinking_delay(complexity="simple")
+            await asyncio.sleep(think_time)
+
+        # Dismiss overlays (with human behavior)
+        await dismiss_overlays(page, human=human)
+
+        # Lazy load content (with human behavior)
+        await lazy_load_content(page, human=human)
 
         # Get final URL
         final_url = page.url
@@ -372,11 +627,13 @@ async def main():
     parser.add_argument("--timeout", type=int, default=30000, help="Timeout in milliseconds")
     parser.add_argument("--wait-for", help="CSS selector to wait for")
     parser.add_argument("--headless", type=str, default="true", help="Run headless (true/false)")
+    parser.add_argument("--human-mode", type=str, default="true", help="Enable human-like behavior (true/false)")
 
     args = parser.parse_args()
 
-    # Convert headless string to bool
+    # Convert string args to bool
     headless = args.headless.lower() in ("true", "1", "yes")
+    human_mode = args.human_mode.lower() in ("true", "1", "yes")
 
     try:
         # Run fetch with timeout
@@ -387,8 +644,9 @@ async def main():
                 timeout=args.timeout,
                 wait_for=args.wait_for,
                 headless=headless,
+                human_mode=human_mode,
             ),
-            timeout=args.timeout / 1000 + 5  # Add 5s buffer
+            timeout=args.timeout / 1000 + 10  # Add 10s buffer for human delays
         )
         output_result(result)
     except asyncio.TimeoutError:

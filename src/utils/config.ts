@@ -32,6 +32,8 @@ export interface TimeoutConfig {
 export interface BrowserConfig {
   /** Run browser in headless mode (TURBOFETCH_HEADLESS, default: true) */
   headless: boolean;
+  /** Enable human-mode scrolling and delays (TURBOFETCH_HUMAN_MODE, default: true) */
+  humanMode: boolean;
 }
 
 /** Stealth configuration for anti-bot evasion */
@@ -119,6 +121,7 @@ export function getDefaultConfig(): Config {
     },
     browser: {
       headless: true,
+      humanMode: true,
     },
     stealth: {
       enabled: true,
@@ -154,6 +157,7 @@ export function loadConfig(): Config {
     },
     browser: {
       headless: parseEnvBool('TURBOFETCH_HEADLESS', true),
+      humanMode: parseEnvBool('TURBOFETCH_HUMAN_MODE', true),
     },
     stealth: {
       enabled: parseEnvBool('TURBOFETCH_STEALTH_ENABLED', true),
