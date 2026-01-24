@@ -30,13 +30,13 @@ export interface PoolManagerConfig {
 }
 
 const DEFAULT_POOL_CONFIG: Required<Omit<PoolManagerConfig, 'browserConfig'>> & { browserConfig: BrowserInstanceConfig } = {
-  minInstances: 2,
-  maxInstances: 14,
-  idleTimeoutMs: 0,              // Never idle out - keep browsers hot
+  minInstances: 0,               // Cold start - no browsers kept hot
+  maxInstances: 5,               // Allow some parallelism but not too much
+  idleTimeoutMs: 5000,           // Close idle browsers after 5 seconds
   acquireTimeoutMs: 30000,       // 30 seconds
-  evictionRunIntervalMs: 30000,  // 30 seconds
-  maxInstanceAgeMs: 3600000,     // 1 hour (recycle old instances)
-  maxRequestsPerInstance: 200,   // Higher limit before recycle
+  evictionRunIntervalMs: 5000,   // Check for idle browsers every 5 seconds
+  maxInstanceAgeMs: 60000,       // 1 minute max (fresh browsers)
+  maxRequestsPerInstance: 1,     // Fresh browser for each request
   browserConfig: {}
 };
 
