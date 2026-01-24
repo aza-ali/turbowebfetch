@@ -113,15 +113,13 @@ export interface RawPageContent {
 }
 
 // =============================================================================
-// Browser Instance
+// Browser Instance (Deprecated)
 // =============================================================================
 
 /**
- * Re-export BrowserInstance from pool module for type consistency
- * The class provides: id, browser, context, createdAt, requestCount
- * Plus methods: createPage(), close(), isHealthy()
+ * BrowserInstance is deprecated - browser management is now handled by Python nodriver
  */
-export { BrowserInstance } from './pool/instance.js';
+// export { BrowserInstance } from './pool/instance.js';  // Removed - no longer used
 
 // =============================================================================
 // Rate Limiter Configuration
@@ -150,26 +148,16 @@ export interface RateLimiterState {
 // =============================================================================
 
 /**
- * Browser pool configuration
+ * Python fetcher configuration
+ * Python process pool settings (Nodriver-based Chrome automation)
  */
-export interface PoolConfig {
-  minInstances: number;
-  maxInstances: number;
-  idleTimeoutMs: number;
-  acquireTimeoutMs: number;
-  maxRequestsPerInstance: number;
-}
-
-/**
- * Playwright browser launch configuration
- */
-export interface BrowserConfig {
-  headless: boolean;
-  userAgent: string;
-  viewport: {
-    width: number;
-    height: number;
-  };
+export interface PythonFetcherConfig {
+  /** Path to Python virtual environment executable */
+  pythonPath: string;
+  /** Path to fetcher.py script */
+  fetcherScript: string;
+  /** Maximum concurrent Python processes */
+  maxProcesses: number;
 }
 
 /**
@@ -184,8 +172,7 @@ export interface TimeoutConfig {
  * Complete server configuration
  */
 export interface ServerConfig {
-  pool: PoolConfig;
-  browser: BrowserConfig;
+  python: PythonFetcherConfig;
   timeouts: TimeoutConfig;
   rateLimiter: RateLimiterConfig;
 }
@@ -198,22 +185,12 @@ export interface ServerConfig {
  * Default server configuration, can be overridden via environment variables
  */
 export function getDefaultConfig(): ServerConfig {
+  const projectRoot = process.cwd();
   return {
-    pool: {
-      minInstances: parseInt(process.env.TURBOFETCH_POOL_MIN || "2", 10),
-      maxInstances: parseInt(process.env.TURBOFETCH_POOL_MAX || "14", 10),
-      idleTimeoutMs: parseInt(process.env.TURBOFETCH_IDLE_TIMEOUT || "60000", 10),
-      acquireTimeoutMs: 30000,
-      maxRequestsPerInstance: 50,
-    },
-    browser: {
-      headless: true,
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      viewport: {
-        width: 1280,
-        height: 800,
-      },
+    python: {
+      pythonPath: process.env.TURBOFETCH_PYTHON_PATH || `${projectRoot}/python/venv/bin/python`,
+      fetcherScript: process.env.TURBOFETCH_FETCHER_SCRIPT || `${projectRoot}/python/fetcher.py`,
+      maxProcesses: parseInt(process.env.TURBOFETCH_MAX_PROCESSES || "14", 10),
     },
     timeouts: {
       navigation: parseInt(process.env.TURBOFETCH_NAV_TIMEOUT || "30000", 10),

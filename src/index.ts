@@ -13,7 +13,6 @@ import { execSync } from "child_process";
 import { createServer, setupRequestHandlers, registerToolHandlers } from "./server.js";
 import { getDefaultConfig, type ToolHandlers } from "./types.js";
 import { fetchPage, fetchBatch } from "./tools/index.js";
-import { shutdownPoolManager, getPoolManager } from "./pool/manager.js";
 
 // =============================================================================
 // Server State
@@ -65,21 +64,22 @@ function createToolHandlers(): ToolHandlers {
 // =============================================================================
 
 /**
- * Cleans up orphaned Chromium processes from previous crashed sessions.
+ * Cleans up orphaned Chrome processes from previous crashed sessions.
  * Only kills processes whose parent process no longer exists.
  * Safe to run with multiple Claude Code tabs - won't kill other tabs' browsers.
+ * Note: Nodriver uses Chrome, not Firefox.
  */
 function cleanupOrphanedBrowsers(): void {
   try {
-    // Get all chrome-headless-shell processes with their PIDs and parent PIDs
+    // Get all Chrome processes with their PIDs and parent PIDs
     // Format: PID PPID COMMAND
     const psOutput = execSync(
-      'ps -eo pid,ppid,comm | grep "chrome-headless-shell" | grep -v grep',
+      'ps -eo pid,ppid,comm | grep -i "chrome" | grep -v grep',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim();
 
     if (!psOutput) {
-      return; // No Chromium processes found
+      return; // No Chrome processes found
     }
 
     const lines = psOutput.split('\n');
@@ -133,9 +133,8 @@ async function main(): Promise<void> {
     // Load configuration
     const config = getDefaultConfig();
     log("info", "Configuration loaded", {
-      poolMin: config.pool.minInstances,
-      poolMax: config.pool.maxInstances,
       defaultRpm: config.rateLimiter.defaultRequestsPerMinute,
+      navTimeout: config.timeouts.navigation,
     });
 
     // Create server
@@ -164,13 +163,8 @@ async function main(): Promise<void> {
     log("info", "TurboFetch MCP Server ready", {
       version: "1.0.0",
       tools: ["fetch", "fetch_batch"],
+      engine: "Python/Nodriver (Chrome)",
     });
-
-    // Pre-warm browser pool in background (non-blocking)
-    const poolManager = getPoolManager();
-    poolManager.warmup()
-      .then(() => log("info", "Browser pool warmed up", { instances: 2 }))
-      .catch((err) => log("warn", "Browser warmup failed (will create on demand)", { error: err.message }));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log("error", "Failed to start server", { error: errorMessage });
@@ -205,10 +199,6 @@ function setupShutdownHandlers(server: ReturnType<typeof createServer>): void {
       // Close server connection
       await server.close();
       log("info", "Server connection closed");
-
-      // Drain browser pool
-      await shutdownPoolManager();
-      log("info", "Browser pool drained");
 
       clearTimeout(shutdownTimeout);
       log("info", "Graceful shutdown complete");

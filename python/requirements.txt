@@ -1,0 +1,11 @@
+# TurboWebFetch Python Dependencies
+
+# Nodriver - Undetected browser automation with built-in Cloudflare bypass
+nodriver>=0.8.0
+
+# Content extraction
+readability-lxml>=0.8.1
+markdownify>=0.11.6
+
+# HTML parsing (dependency for readability)
+lxml>=4.9.0

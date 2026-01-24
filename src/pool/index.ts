@@ -1,16 +1,9 @@
 /**
- * Browser Pool Module
+ * Browser Pool Module (Deprecated)
  *
- * Exports the browser pool management functionality for the TurboFetch MCP server.
+ * Browser pool management has been replaced with Python nodriver subprocess calls.
+ * This file is kept for backward compatibility but exports are removed.
  */
 
-export { BrowserInstance, BrowserInstanceConfig } from './instance.js';
-export {
-  PoolManager,
-  PoolManagerConfig,
-  PoolStats,
-  getPoolManager,
-  shutdownPoolManager,
-  withBrowserInstance,
-  browserPool
-} from './manager.js';
+// No exports - pool management is now handled by Python
+export {};

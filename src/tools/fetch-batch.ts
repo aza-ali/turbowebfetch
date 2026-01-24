@@ -18,8 +18,8 @@ import { logger } from "../utils/logger.js";
 // Get configuration
 const config = getDefaultConfig();
 
-// Maximum concurrent fetches (matches pool max)
-const MAX_CONCURRENT = config.pool.maxInstances;
+// Maximum concurrent fetches (matches Python process limit)
+const MAX_CONCURRENT = config.python.maxProcesses;
 
 /**
  * Chunks an array into smaller arrays of specified size
@@ -36,7 +36,7 @@ function chunkArray<T>(array: T[], size: number): T[][] {
  * Fetches a batch of URLs in parallel
  *
  * Uses Promise.all to fetch URLs concurrently, limited to
- * MAX_CONCURRENT (14) at a time to match the browser pool size.
+ * MAX_CONCURRENT (14) at a time to match the Python process limit.
  *
  * @param options - Batch fetch options including URLs and format
  * @returns FetchBatchResult with aggregated results

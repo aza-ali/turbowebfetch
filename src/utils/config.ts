@@ -32,13 +32,6 @@ export interface TimeoutConfig {
 export interface BrowserConfig {
   /** Run browser in headless mode (TURBOFETCH_HEADLESS, default: true) */
   headless: boolean;
-  /** User agent string for all requests */
-  userAgent: string;
-  /** Viewport dimensions */
-  viewport: {
-    width: number;
-    height: number;
-  };
 }
 
 /** Stealth configuration for anti-bot evasion */
@@ -51,17 +44,6 @@ export interface StealthConfig {
   dismissPopups: boolean;
   /** Trigger lazy-loaded content by scrolling (TURBOFETCH_LAZY_LOAD, default: true) */
   triggerLazyLoad: boolean;
-  /** User agent for stealth mode (TURBOFETCH_USER_AGENT, default: Chrome UA) */
-  userAgent: string;
-  /** Viewport dimensions for stealth mode */
-  viewport: {
-    width: number;
-    height: number;
-  };
-  /** Browser locale (TURBOFETCH_LOCALE, default: 'en-US') */
-  locale: string;
-  /** Browser timezone (TURBOFETCH_TIMEZONE, default: 'America/Los_Angeles') */
-  timezone: string;
 }
 
 /** Retry configuration for failed requests */
@@ -118,24 +100,6 @@ function parseEnvBool(name: string, defaultValue: boolean): boolean {
 }
 
 /**
- * Parse a string from an environment variable with a default fallback.
- */
-function parseEnvString(name: string, defaultValue: string): string {
-  const value = process.env[name];
-  if (value === undefined || value === '') {
-    return defaultValue;
-  }
-  return value;
-}
-
-/**
- * Standard Chrome user agent string for macOS.
- * This presents as a regular Chrome browser, not a bot.
- */
-const DEFAULT_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-
-/**
  * Get default configuration values.
  * Useful for testing or resetting to defaults.
  */
@@ -155,24 +119,12 @@ export function getDefaultConfig(): Config {
     },
     browser: {
       headless: true,
-      userAgent: DEFAULT_USER_AGENT,
-      viewport: {
-        width: 1280,
-        height: 800,
-      },
     },
     stealth: {
       enabled: true,
       dismissCookies: true,
       dismissPopups: true,
       triggerLazyLoad: true,
-      userAgent: DEFAULT_USER_AGENT,
-      viewport: {
-        width: 1920,
-        height: 1080,
-      },
-      locale: 'en-US',
-      timezone: 'America/Los_Angeles',
     },
     retry: {
       maxRetries: 3,
@@ -202,24 +154,12 @@ export function loadConfig(): Config {
     },
     browser: {
       headless: parseEnvBool('TURBOFETCH_HEADLESS', true),
-      userAgent: parseEnvString('TURBOFETCH_USER_AGENT', DEFAULT_USER_AGENT),
-      viewport: {
-        width: parseEnvInt('TURBOFETCH_VIEWPORT_WIDTH', 1280),
-        height: parseEnvInt('TURBOFETCH_VIEWPORT_HEIGHT', 800),
-      },
     },
     stealth: {
       enabled: parseEnvBool('TURBOFETCH_STEALTH_ENABLED', true),
       dismissCookies: parseEnvBool('TURBOFETCH_DISMISS_COOKIES', true),
       dismissPopups: parseEnvBool('TURBOFETCH_DISMISS_POPUPS', true),
       triggerLazyLoad: parseEnvBool('TURBOFETCH_LAZY_LOAD', true),
-      userAgent: parseEnvString('TURBOFETCH_USER_AGENT', DEFAULT_USER_AGENT),
-      viewport: {
-        width: parseEnvInt('TURBOFETCH_STEALTH_VIEWPORT_WIDTH', 1920),
-        height: parseEnvInt('TURBOFETCH_STEALTH_VIEWPORT_HEIGHT', 1080),
-      },
-      locale: parseEnvString('TURBOFETCH_LOCALE', 'en-US'),
-      timezone: parseEnvString('TURBOFETCH_TIMEZONE', 'America/Los_Angeles'),
     },
     retry: {
       maxRetries: parseEnvInt('TURBOFETCH_MAX_RETRIES', 3),
@@ -272,27 +212,11 @@ export function validateConfig(cfg: Config): string[] {
     errors.push('timeouts.waitFor should be at least 100ms');
   }
 
-  // Browser validation
-  if (cfg.browser.viewport.width < 320) {
-    errors.push('browser.viewport.width should be at least 320px');
-  }
-  if (cfg.browser.viewport.height < 240) {
-    errors.push('browser.viewport.height should be at least 240px');
-  }
+  // Browser validation (Camoufox handles user-agent and viewport automatically)
+  // No additional browser config validation needed
 
-  // Stealth validation
-  if (cfg.stealth.viewport.width < 320) {
-    errors.push('stealth.viewport.width should be at least 320px');
-  }
-  if (cfg.stealth.viewport.height < 240) {
-    errors.push('stealth.viewport.height should be at least 240px');
-  }
-  if (!cfg.stealth.locale || cfg.stealth.locale.length < 2) {
-    errors.push('stealth.locale must be a valid locale string (e.g., en-US)');
-  }
-  if (!cfg.stealth.timezone || cfg.stealth.timezone.length < 3) {
-    errors.push('stealth.timezone must be a valid timezone string (e.g., America/Los_Angeles)');
-  }
+  // Stealth validation (Camoufox handles fingerprinting automatically)
+  // No additional stealth config validation needed
 
   // Retry validation
   if (cfg.retry.maxRetries < 0) {
