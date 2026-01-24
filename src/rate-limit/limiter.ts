@@ -122,7 +122,9 @@ export class RateLimiter {
     const waitTime = this.getWaitTime(bucket);
 
     if (waitTime > 0) {
-      await this.sleep(waitTime);
+      // Apply variable jitter to avoid predictable timing patterns
+      const jitteredWait = this.applyJitter(waitTime);
+      await this.sleep(jitteredWait);
       // Refill again after waiting
       this.refillBucket(bucket);
     }
@@ -266,6 +268,19 @@ export class RateLimiter {
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  /**
+   * Applies variable jitter to a wait time to avoid predictable patterns.
+   * The jitter percentage itself varies (10-30%) for extra unpredictability.
+   */
+  private applyJitter(baseMs: number): number {
+    // Pick a random jitter percentage between 10% and 30%
+    const jitterPercent = 0.10 + Math.random() * 0.20;
+    // Apply jitter in either direction
+    const jitterRange = baseMs * jitterPercent;
+    const jitter = (Math.random() * 2 - 1) * jitterRange;
+    return Math.max(100, Math.round(baseMs + jitter));
+  }
 }
 
 /**
@@ -274,14 +289,34 @@ export class RateLimiter {
  */
 export function createJobSearchLimiter(): RateLimiter {
   return new RateLimiter({
-    defaultRpm: 60,
+    defaultRpm: 30, // Conservative default
     domainLimits: {
-      'linkedin.com': 30,
-      'www.linkedin.com': 30,
-      'indeed.com': 30,
-      'www.indeed.com': 30,
-      'glassdoor.com': 30,
-      'www.glassdoor.com': 30,
+      // Job boards - moderate limits
+      'linkedin.com': 20,
+      'www.linkedin.com': 20,
+      'indeed.com': 20,
+      'www.indeed.com': 20,
+      'glassdoor.com': 20,
+      'www.glassdoor.com': 20,
+      'lever.co': 20,
+      'jobs.lever.co': 20,
+      'greenhouse.io': 20,
+      'boards.greenhouse.io': 20,
+      'job-boards.greenhouse.io': 20,
+      'workday.com': 15,
+      'myworkdayjobs.com': 15,
+
+      // Fortress-level anti-bot - very conservative
+      'x.com': 10,
+      'twitter.com': 10,
+      'airbnb.com': 10,
+      'www.airbnb.com': 10,
+
+      // General sites with known anti-bot
+      'amazon.com': 15,
+      'www.amazon.com': 15,
+      'zillow.com': 15,
+      'www.zillow.com': 15,
     },
   });
 }
