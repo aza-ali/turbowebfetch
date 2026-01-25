@@ -29,7 +29,7 @@ Google Chrome must be installed (not Chromium).
 claude mcp add turbo-web-fetch npx -y turbowebfetch
 ```
 
-That's it. Your agents now have access to `turbo_web_fetch`.
+That's it. Your agents now have access to the `fetch` and `fetch_batch` tools.
 
 ---
 
@@ -124,7 +124,7 @@ The tool auto-detects when content has loaded. Use `wait_for` only if auto-detec
 - **Bloomberg** - Requires interactive verification
 
 **Performance:**
-- Adds 5-8 seconds per page (browser startup + rendering + human-like behavior)
+- Adds 5-10 seconds per page (browser startup + rendering + human-like behavior)
 - Memory usage: ~200-400MB per browser instance
 - For 14 parallel fetches, expect ~4GB RAM usage
 
