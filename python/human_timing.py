@@ -319,32 +319,6 @@ def natural_delay_sequence(
     return delays
 
 
-# Convenience function for async usage
-async def async_reading_delay(**kwargs) -> float:
-    """Async wrapper for reading_delay. Returns the delay (caller awaits sleep)."""
-    return reading_delay(**kwargs)
-
-
-async def async_thinking_delay(**kwargs) -> float:
-    """Async wrapper for thinking_delay. Returns the delay (caller awaits sleep)."""
-    return thinking_delay(**kwargs)
-
-
-async def async_micro_delay(**kwargs) -> float:
-    """Async wrapper for micro_delay. Returns the delay (caller awaits sleep)."""
-    return micro_delay(**kwargs)
-
-
-async def async_scroll_pause(**kwargs) -> float:
-    """Async wrapper for scroll_pause. Returns the delay (caller awaits sleep)."""
-    return scroll_pause(**kwargs)
-
-
-async def async_maybe_distraction(**kwargs) -> float:
-    """Async wrapper for maybe_distraction. Returns the delay (caller awaits sleep)."""
-    return maybe_distraction(**kwargs)
-
-
 # Quick test / demo
 if __name__ == "__main__":
     print("Human Timing Module Demo")
