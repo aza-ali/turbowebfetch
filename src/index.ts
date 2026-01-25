@@ -15,6 +15,47 @@ import { getDefaultConfig, type ToolHandlers } from "./types.js";
 import { fetchPage, fetchBatch } from "./tools/index.js";
 
 // =============================================================================
+// Public Exports (for library usage)
+// =============================================================================
+
+export {
+  // Types
+  type ContentFormat,
+  type FetchOptions,
+  type FetchBatchOptions,
+  type FetchResult,
+  type FetchError,
+  type FetchErrorCode,
+  type FetchResponse,
+  type FetchBatchResult,
+  type RawPageContent,
+  type RateLimiterConfig,
+  type RateLimiterState,
+  type PythonFetcherConfig,
+  type TimeoutConfig,
+  type ServerConfig,
+  type LogLevel,
+  type LogEntry,
+  type FetchHandler,
+  type FetchBatchHandler,
+  type ToolHandlers,
+  // Schemas
+  ContentFormatSchema,
+  FetchOptionsSchema,
+  FetchBatchOptionsSchema,
+  // Functions
+  getDefaultConfig,
+  isSuccessResponse,
+  isErrorResponse,
+  createSuccessResponse,
+  createErrorResponse,
+} from "./types.js";
+
+export { fetchPage, fetchBatch } from "./tools/index.js";
+export { createServer, setupRequestHandlers, registerToolHandlers } from "./server.js";
+export { rateLimiter } from "./rate-limit/limiter.js";
+
+// =============================================================================
 // Server State
 // =============================================================================
 
