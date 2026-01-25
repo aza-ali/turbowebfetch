@@ -484,10 +484,10 @@ async def start_headed_browser(
             try:
                 import signal
                 os.kill(chrome_pid, signal.SIGTERM)
-            except:
+            except Exception:
                 try:
                     os.kill(chrome_pid, signal.SIGKILL)
-                except:
+                except Exception:
                     pass
             raise FetchError("TIMEOUT", f"Browser connection timed out after {NAVIGATE_TIMEOUT}s")
         except Exception as e:
@@ -496,10 +496,10 @@ async def start_headed_browser(
             try:
                 import signal
                 os.kill(chrome_pid, signal.SIGTERM)
-            except:
+            except Exception:
                 try:
                     os.kill(chrome_pid, signal.SIGKILL)
-                except:
+                except Exception:
                     pass
             raise  # Re-raise the original exception
     else:
@@ -1081,7 +1081,7 @@ async def fetch_page(
             # Close headless browser
             try:
                 browser.stop()
-            except:
+            except Exception:
                 pass
             browser = None
 
@@ -1132,7 +1132,7 @@ async def fetch_page(
                         viewport_width=int(viewport_width),
                         viewport_height=int(viewport_height)
                     )
-                except:
+                except Exception:
                     human = HumanBehavior(enabled=False)
 
         # Detect DataDome anti-bot challenge (only if not already retried for Cloudflare)
@@ -1158,7 +1158,7 @@ async def fetch_page(
                 # Close headless browser
                 try:
                     browser.stop()
-                except:
+                except Exception:
                     pass
                 browser = None
 
@@ -1181,7 +1181,7 @@ async def fetch_page(
                             viewport_width=int(viewport_width),
                             viewport_height=int(viewport_height)
                         )
-                    except:
+                    except Exception:
                         human = HumanBehavior(enabled=False)
 
                 # Check if DataDome is still blocking
@@ -1340,7 +1340,7 @@ async def fetch_page(
                 # Fallback: try direct kill on main process
                 try:
                     os.kill(chrome_pid, signal.SIGKILL)
-                except:
+                except Exception:
                     pass
                 log_error("chrome_background_cleanup_failed", pid=chrome_pid, error=str(e))
 
