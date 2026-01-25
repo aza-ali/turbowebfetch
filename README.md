@@ -26,7 +26,7 @@ Google Chrome must be installed (not Chromium).
 ## Quick Start
 
 ```bash
-claude mcp add turbo-web-fetch npx -y turbowebfetch
+claude mcp add turbowebfetch npx -y turbowebfetch
 ```
 
 That's it. Your agents now have access to the `fetch` and `fetch_batch` tools.
@@ -53,7 +53,7 @@ npm run setup:python
 Then register with Claude Code:
 
 ```bash
-claude mcp add turbo-web-fetch node /path/to/turbowebfetch/dist/index.js
+claude mcp add turbowebfetch node /path/to/turbowebfetch/dist/index.js
 ```
 
 ---
@@ -97,7 +97,7 @@ The challenge-handling exists because many legitimate sites use broad bot mitiga
 
 **Single page:**
 ```
-mcp__turbo_web_fetch__fetch(url: "https://react.dev/learn", format: "markdown")
+mcp__turbowebfetch__fetch(url: "https://react.dev/learn", format: "markdown")
 ```
 
 **Response:**
@@ -113,7 +113,7 @@ mcp__turbo_web_fetch__fetch(url: "https://react.dev/learn", format: "markdown")
 
 **Batch (parallel):**
 ```
-mcp__turbo_web_fetch__fetch_batch(
+mcp__turbowebfetch__fetch_batch(
   urls: [
     "https://react.dev/learn",
     "https://nextjs.org/docs",
@@ -190,7 +190,7 @@ Install Google Chrome from https://google.com/chrome (not Chromium).
 
 Some heavily lazy-loaded sites need an explicit selector:
 ```
-mcp__turbo_web_fetch__fetch(
+mcp__turbowebfetch__fetch(
   url: "https://www.bestbuy.com/site/searchpage.jsp?st=laptop",
   wait_for: "[class*=\"product\"]",
   timeout: 90000

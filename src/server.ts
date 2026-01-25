@@ -122,7 +122,7 @@ const TOOLS: Tool[] = [FETCH_TOOL, FETCH_BATCH_TOOL];
 export function createServer(): Server {
   const server = new Server(
     {
-      name: "turbo-web-fetch",
+      name: "turbowebfetch",
       version: "1.0.0",
     },
     {

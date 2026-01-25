@@ -183,7 +183,7 @@ function showSuccessMessage() {
   log('By Mourtaza Ali | mourtaza.com', colors.gray);
   console.log('');
   console.log('Register with Claude Code:');
-  log('  claude mcp add turbo-web-fetch npx -y turbowebfetch', colors.yellow);
+  log('  claude mcp add turbowebfetch npx -y turbowebfetch', colors.yellow);
   console.log('');
 }
 
