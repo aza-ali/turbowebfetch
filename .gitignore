@@ -1,18 +1,41 @@
 # Node
 node_modules/
 dist/
+*.tgz
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
 
 # Python
 python/venv/
 python/__pycache__/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Testing
+coverage/
+.nyc_output/
+.vitest/
+
+# IDE/Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 # Environment
 .env
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
