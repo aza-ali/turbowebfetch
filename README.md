@@ -44,6 +44,12 @@ npm install
 npm run build
 ```
 
+Python setup (virtual environment + nodriver) runs automatically during `npm install`. If it fails, run manually:
+
+```bash
+npm run setup:python
+```
+
 Then register with Claude Code:
 
 ```bash
