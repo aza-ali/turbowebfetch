@@ -20,6 +20,7 @@ import { fetchPage, fetchBatch } from "./tools/index.js";
 
 let isShuttingDown = false;
 let serverTransport: StdioServerTransport | null = null;
+let cleanupInterval: NodeJS.Timeout | null = null;
 
 // =============================================================================
 // Logging
@@ -66,51 +67,116 @@ function createToolHandlers(): ToolHandlers {
 /**
  * Cleans up orphaned Chrome processes from previous TurboWebFetch sessions.
  *
- * IMPORTANT: Only kills Chrome processes that were spawned by TurboWebFetch,
- * identified by having '--user-data-dir=.../turbowebfetch_chrome_...' in their args.
+ * Uses three strategies:
+ * 1. Kill processes with 'turbowebfetch' in user-data-dir
+ * 2. Kill processes using nodriver temp directories
+ * 3. Kill headless Chrome processes running >5 minutes (likely stuck)
  *
- * This is safe because:
- * - User's personal Chrome browser does NOT have this user-data-dir
- * - Other applications' Chrome instances do NOT have this marker
- * - Only TurboWebFetch uses the 'turbowebfetch_chrome_' temp directory prefix
+ * IMPORTANT: Only kills Chrome processes that were spawned by TurboWebFetch,
+ * NOT the user's personal Chrome browser.
  */
 function cleanupOrphanedBrowsers(): void {
+  let totalKilled = 0;
+
+  // Strategy 1: Kill TurboWebFetch processes (covers both turbowebfetch_ and turbowebfetch_chrome_)
   try {
-    // Get Chrome processes with full command line args
-    // We need the full args to check for our specific user-data-dir marker
     const psOutput = execSync(
-      'ps -eo pid,args | grep -i "chrome" | grep "turbowebfetch_chrome_" | grep -v grep',
+      'ps -eo pid,args | grep -i "chrome" | grep "turbowebfetch" | grep -v grep',
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim();
 
-    if (!psOutput) {
-      return; // No TurboWebFetch Chrome processes found
-    }
-
-    const lines = psOutput.split('\n');
-    let orphansKilled = 0;
-
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 1) continue;
-
-      const pid = parseInt(parts[0], 10);
-      if (isNaN(pid)) continue;
-
-      // Kill this TurboWebFetch-spawned Chrome process
-      try {
-        process.kill(pid, 'SIGTERM');
-        orphansKilled++;
-      } catch {
-        // Process may have already exited
+    if (psOutput) {
+      for (const line of psOutput.split('\n')) {
+        const pid = parseInt(line.trim().split(/\s+/)[0], 10);
+        if (!isNaN(pid)) {
+          try {
+            process.kill(pid, 'SIGKILL');  // Use SIGKILL for immediate termination
+            totalKilled++;
+          } catch {
+            // Process may have already exited
+          }
+        }
       }
     }
+  } catch {
+    // No matching processes - that's fine
+  }
 
-    if (orphansKilled > 0) {
-      log("info", "Cleaned up orphaned TurboWebFetch browser processes", { count: orphansKilled });
+  // Strategy 2: Kill nodriver temp directory processes
+  try {
+    const psOutput = execSync(
+      'ps -eo pid,args | grep -i "chrome" | grep -E "/tmp/\\.org\\.chromium|/tmp/nodriver" | grep -v grep',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+
+    if (psOutput) {
+      for (const line of psOutput.split('\n')) {
+        const pid = parseInt(line.trim().split(/\s+/)[0], 10);
+        if (!isNaN(pid)) {
+          try {
+            process.kill(pid, 'SIGKILL');
+            totalKilled++;
+          } catch {
+            // Process may have already exited
+          }
+        }
+      }
     }
   } catch {
-    // ps/grep command failed (no matching processes) - that's fine
+    // No matching processes - that's fine
+  }
+
+  // Strategy 3: Kill long-running headless Chrome (>5 minutes = likely stuck)
+  try {
+    // ps etime format: [[dd-]hh:]mm:ss
+    const psOutput = execSync(
+      'ps -eo pid,etime,args | grep -i "chrome" | grep "\\-\\-headless" | grep -v grep',
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+
+    if (psOutput) {
+      for (const line of psOutput.split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 2) continue;
+
+        const pid = parseInt(parts[0], 10);
+        const etime = parts[1];  // Format: [[dd-]hh:]mm:ss
+
+        if (isNaN(pid)) continue;
+
+        // Parse elapsed time to seconds
+        let totalSeconds = 0;
+        const etimeParts = etime.split(/[-:]/);
+        if (etimeParts.length === 2) {
+          // mm:ss
+          totalSeconds = parseInt(etimeParts[0], 10) * 60 + parseInt(etimeParts[1], 10);
+        } else if (etimeParts.length === 3) {
+          // hh:mm:ss
+          totalSeconds = parseInt(etimeParts[0], 10) * 3600 + parseInt(etimeParts[1], 10) * 60 + parseInt(etimeParts[2], 10);
+        } else if (etimeParts.length === 4) {
+          // dd-hh:mm:ss
+          totalSeconds = parseInt(etimeParts[0], 10) * 86400 + parseInt(etimeParts[1], 10) * 3600 +
+                         parseInt(etimeParts[2], 10) * 60 + parseInt(etimeParts[3], 10);
+        }
+
+        // Kill if running >5 minutes (300 seconds)
+        if (totalSeconds > 300) {
+          try {
+            process.kill(pid, 'SIGKILL');
+            totalKilled++;
+            log("info", "Killed long-running headless Chrome", { pid, elapsed_seconds: totalSeconds });
+          } catch {
+            // Process may have already exited
+          }
+        }
+      }
+    }
+  } catch {
+    // No matching processes - that's fine
+  }
+
+  if (totalKilled > 0) {
+    log("info", "Cleaned up orphaned browser processes", { count: totalKilled });
   }
 }
 
@@ -156,6 +222,12 @@ async function main(): Promise<void> {
     // Handle graceful shutdown
     setupShutdownHandlers(server);
 
+    // Set up periodic cleanup every 5 minutes to catch orphaned processes during runtime
+    cleanupInterval = setInterval(() => {
+      log("debug", "Running periodic orphan cleanup");
+      cleanupOrphanedBrowsers();
+    }, 5 * 60 * 1000);  // 5 minutes
+
     log("info", "TurboFetch MCP Server ready", {
       version: "1.0.0",
       tools: ["fetch", "fetch_batch"],
@@ -185,6 +257,13 @@ function setupShutdownHandlers(server: ReturnType<typeof createServer>): void {
     isShuttingDown = true;
     log("info", `Received ${signal}, initiating graceful shutdown`);
 
+    // Clear periodic cleanup interval
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval);
+      cleanupInterval = null;
+      log("info", "Cleanup interval cleared");
+    }
+
     try {
       // Give in-flight requests time to complete
       const shutdownTimeout = setTimeout(() => {
@@ -195,6 +274,10 @@ function setupShutdownHandlers(server: ReturnType<typeof createServer>): void {
       // Close server connection
       await server.close();
       log("info", "Server connection closed");
+
+      // Final cleanup of any remaining Chrome processes
+      cleanupOrphanedBrowsers();
+      log("info", "Final browser cleanup complete");
 
       clearTimeout(shutdownTimeout);
       log("info", "Graceful shutdown complete");

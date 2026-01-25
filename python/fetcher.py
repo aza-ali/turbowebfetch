@@ -148,8 +148,9 @@ class HumanBehavior:
     def get_reading_delay(self, content_length: Optional[int] = None) -> float:
         """Get delay for reading/scanning page content."""
         if self.enabled:
-            return reading_delay(content_length=content_length, min_seconds=1.5, max_seconds=3.5)
-        return 1.0  # Simple fallback
+            # Reduced from 1.5-3.5s to 0.8-1.5s for better performance
+            return reading_delay(content_length=content_length, min_seconds=0.8, max_seconds=1.5)
+        return 0.5  # Simple fallback
 
     def get_thinking_delay(self, complexity: str = "simple") -> float:
         """Get delay before taking an action (cognitive processing time)."""
@@ -533,7 +534,12 @@ def output_result(result: Dict[str, Any]):
 def extract_text_content(html: str, title: str, inner_text: Optional[str] = None) -> str:
     """Extract readable text content using Readability, with innerText fallback."""
     try:
-        doc = Document(html)
+        # Configure Readability to filter out cookie/consent noise
+        doc = Document(
+            html,
+            negative_keywords="cookie,consent,privacy,gdpr,banner,modal,popup,overlay,newsletter,subscribe,tracking",
+            min_text_length=15,  # Lower from default 25 to catch shorter headlines
+        )
         summary = doc.summary()
 
         # Simple text extraction
@@ -551,9 +557,18 @@ def extract_text_content(html: str, title: str, inner_text: Optional[str] = None
         text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
         text = text.strip()
 
-        # If Readability returned little content but we have innerText, use that instead
-        if len(text) < 200 and inner_text and len(inner_text) > len(text):
-            log_info("using_innertext_fallback", readability_len=len(text), innertext_len=len(inner_text))
+        # Check if extracted content looks like cookie/consent banner text
+        text_lower = text.lower()
+        suspicious_phrases = [
+            "cookie", "consent", "privacy policy", "accept all", "gdpr",
+            "manage preferences", "personal information", "we use cookies",
+            "this site uses", "by continuing", "advertising partners"
+        ]
+        is_suspicious = any(phrase in text_lower for phrase in suspicious_phrases)
+
+        # Fallback to innerText if content is short OR looks like cookie banner
+        if (len(text) < 500 or is_suspicious) and inner_text and len(inner_text) > len(text):
+            log_info("using_innertext_fallback", readability_len=len(text), innertext_len=len(inner_text), suspicious=is_suspicious)
             text = inner_text.strip()
 
         return f"{title}\n\n{text}" if title else text
@@ -570,7 +585,12 @@ def extract_text_content(html: str, title: str, inner_text: Optional[str] = None
 def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = None) -> str:
     """Extract markdown content using Readability + Markdownify, with innerText fallback."""
     try:
-        doc = Document(html)
+        # Configure Readability to filter out cookie/consent noise
+        doc = Document(
+            html,
+            negative_keywords="cookie,consent,privacy,gdpr,banner,modal,popup,overlay,newsletter,subscribe,tracking",
+            min_text_length=15,  # Lower from default 25 to catch shorter headlines
+        )
         summary = doc.summary()
 
         # Convert to markdown
@@ -581,9 +601,18 @@ def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = 
         markdown = re.sub(r'\n\s*\n\s*\n', '\n\n', markdown)
         markdown = markdown.strip()
 
-        # If Readability returned little content but we have innerText, use that instead
-        if len(markdown) < 200 and inner_text and len(inner_text) > len(markdown):
-            log_info("using_innertext_fallback_md", readability_len=len(markdown), innertext_len=len(inner_text))
+        # Check if extracted content looks like cookie/consent banner text
+        md_lower = markdown.lower()
+        suspicious_phrases = [
+            "cookie", "consent", "privacy policy", "accept all", "gdpr",
+            "manage preferences", "personal information", "we use cookies",
+            "this site uses", "by continuing", "advertising partners"
+        ]
+        is_suspicious = any(phrase in md_lower for phrase in suspicious_phrases)
+
+        # Fallback to innerText if content is short OR looks like cookie banner
+        if (len(markdown) < 500 or is_suspicious) and inner_text and len(inner_text) > len(markdown):
+            log_info("using_innertext_fallback_md", readability_len=len(markdown), innertext_len=len(inner_text), suspicious=is_suspicious)
             markdown = inner_text.strip()
 
         return f"# {title}\n\n{markdown}" if title else markdown
@@ -720,75 +749,113 @@ async def detect_cloudflare(page) -> bool:
         return False
 
 
-async def dismiss_overlays(page, human: Optional[HumanBehavior] = None):
+async def dismiss_overlays(page, human: Optional[HumanBehavior] = None, max_dismiss: int = 3):
     """
-    Dismiss common overlay elements (cookie banners, popups).
+    Dismiss common overlay elements (cookie banners, popups) using fast JavaScript detection.
+
+    Uses a single JavaScript call to find visible overlay buttons, then clicks them.
+    Much faster than sequential page.find() calls (which wait full timeout per selector).
 
     Args:
         page: Nodriver page object
         human: Optional HumanBehavior instance for natural interactions
+        max_dismiss: Maximum number of overlays to dismiss (default 3)
     """
     try:
-        # Common overlay selectors
-        selectors = [
-            "button[aria-label*='cookie' i]",
-            "button[aria-label*='accept' i]",
-            "button:has-text('Accept')",
-            "button:has-text('Agree')",
-            ".cookie-banner button",
-            "#onetrust-accept-btn-handler",
-            ".consent-accept",
-            "[class*='cookie'] button[class*='accept']",
-        ]
+        # Use JavaScript to find all matching buttons in a single call (FAST)
+        # This avoids the 0.5s polling × timeout for each selector
+        js_find_overlays = """
+        (() => {
+            const selectors = [
+                // High-priority: specific consent platforms (most common)
+                '#onetrust-accept-btn-handler',
+                '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+                '#CybotCookiebotDialogBodyButtonAccept',
+                '#didomi-notice-agree-button',
+                '.qc-cmp2-summary-buttons button[mode="primary"]',
+                '.truste-consent-button',
+                '.trustarc-agree-btn',
+                '.cky-btn-accept',
+                '.cmplz-accept',
+                '.cc-btn.cc-dismiss',
+                '.cc-allow',
+                '.iubenda-cs-accept-btn',
+                // Generic patterns
+                '.consent-accept',
+                '[data-testid*="accept"]',
+                '[data-testid*="cookie"] button',
+                'button[data-cookieconsent="accept"]',
+                // Aria-label patterns (case insensitive via JS)
+                'button[aria-label*="cookie" i]',
+                'button[aria-label*="accept" i]',
+            ];
 
-        for selector in selectors:
+            // Find first visible, clickable button matching any selector
+            for (const sel of selectors) {
+                try {
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null && !el.disabled) {
+                        // Return selector that matched
+                        return sel;
+                    }
+                } catch (e) {
+                    // Invalid selector, skip
+                }
+            }
+            return null;
+        })()
+        """
+
+        dismissed_count = 0
+        max_attempts = max_dismiss + 2  # Extra attempts in case some clicks fail
+
+        for attempt in range(max_attempts):
+            if dismissed_count >= max_dismiss:
+                break
+
+            # Fast JS check for any visible overlay button
+            matching_selector = await safe_evaluate(page, js_find_overlays, timeout=3, default=None)
+
+            if not matching_selector:
+                # No more overlays found
+                break
+
             try:
-                # Try to find and click the element
-                element = await page.find(selector, timeout=1)
+                # Find the element using nodriver (needed for click)
+                element = await page.find(matching_selector, timeout=1)
                 if element:
-                    # Add thinking delay before clicking (human hesitation)
+                    # Add brief human hesitation before clicking
                     if human:
                         delay = human.get_thinking_delay(complexity="simple")
-                        await asyncio.sleep(delay)
-
-                        # Get element bounding box for mouse movement
-                        try:
-                            box = await element.get_position()
-                            if box:
-                                # Generate mouse path to element center
-                                center_x = box.x + box.width / 2
-                                center_y = box.y + box.height / 2
-                                path = human.generate_mouse_path(center_x, center_y)
-
-                                # Execute mouse movement (simulate via JS for stealth)
-                                if len(path) > 1:
-                                    step_delay = human.get_mouse_step_delay(len(path))
-                                    for x, y in path[:-1]:  # Skip last point, we'll click there
-                                        await page.evaluate(f"""
-                                            document.elementFromPoint({x}, {y});
-                                        """)
-                                        await asyncio.sleep(step_delay)
-                        except Exception as mouse_err:
-                            log_info("mouse_movement_skipped", error=str(mouse_err))
+                        await asyncio.sleep(min(delay, 0.5))  # Cap at 0.5s
 
                     await element.click()
-                    await asyncio.sleep(0.5)
-                    log_info("overlay_dismissed", selector=selector)
-                    break
-            except:
-                continue
+                    await asyncio.sleep(0.3)  # Brief wait for overlay to close
+                    dismissed_count += 1
+                    log_info("overlay_dismissed", selector=matching_selector, count=dismissed_count)
+            except Exception as click_err:
+                log_info("overlay_click_failed", selector=matching_selector, error=str(click_err))
+                # Continue trying other overlays
+                await asyncio.sleep(0.2)
+
+        if dismissed_count > 0:
+            log_info("overlay_dismissal_complete", total_dismissed=dismissed_count)
     except Exception as e:
         log_error("overlay_dismissal_failed", error=str(e))
 
 
-async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
+async def lazy_load_content(page, human: Optional[HumanBehavior] = None, max_scroll_time: float = 8.0):
     """
     Scroll page to trigger lazy-loaded content using human-like behavior.
 
     Args:
         page: Nodriver page object
         human: Optional HumanBehavior instance for natural scrolling
+        max_scroll_time: Maximum seconds to spend scrolling (default 8s)
     """
+    import time
+    start_time = time.time()
+
     try:
         # Get page dimensions with timeout to prevent hangs
         page_height = await safe_evaluate(page, """
@@ -802,23 +869,38 @@ async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
         page_height = int(page_height)
         viewport_height = int(viewport_height)
 
-        log_info("lazy_load_start", page_height=page_height, viewport_height=viewport_height)
+        # Cap page height to prevent excessive scrolling on infinite-scroll pages
+        MAX_PAGE_HEIGHT = 15000  # ~15 screens max
+        MAX_SCROLL_ACTIONS = 12  # Maximum scroll iterations
+        capped_height = min(page_height, MAX_PAGE_HEIGHT)
+
+        log_info("lazy_load_start", page_height=page_height, capped_height=capped_height, viewport_height=viewport_height)
 
         # Generate scroll sequence using HumanBehavior or fallback
         if human:
-            scroll_sequence = human.generate_scroll_sequence(page_height, viewport_height, for_lazy_load=True)
+            scroll_sequence = human.generate_scroll_sequence(capped_height, viewport_height, for_lazy_load=True)
         else:
             # Simple fallback sequence
-            max_scroll = max(0, page_height - viewport_height)
+            max_scroll = max(0, capped_height - viewport_height)
             scroll_sequence = [
-                {'scroll_to': max_scroll // 2, 'delay_after': 0.5, 'smooth': True},
-                {'scroll_to': max_scroll, 'delay_after': 0.5, 'smooth': True},
+                {'scroll_to': max_scroll // 2, 'delay_after': 0.3, 'smooth': True},
+                {'scroll_to': max_scroll, 'delay_after': 0.3, 'smooth': True},
             ]
 
-        # Execute scroll sequence with timeout on each scroll
+        # Cap scroll sequence length
+        scroll_sequence = scroll_sequence[:MAX_SCROLL_ACTIONS]
+
+        # Execute scroll sequence with time limit
+        scroll_count = 0
         for action in scroll_sequence:
+            # Check time limit
+            elapsed = time.time() - start_time
+            if elapsed >= max_scroll_time:
+                log_info("lazy_load_time_limit", elapsed=round(elapsed, 2), scrolls_completed=scroll_count)
+                break
+
             scroll_to = action['scroll_to']
-            delay = action['delay_after']
+            delay = min(action['delay_after'], 0.5)  # Cap individual delays at 0.5s
             smooth = action.get('smooth', True)
 
             if smooth:
@@ -827,11 +909,12 @@ async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
                         top: {scroll_to},
                         behavior: 'smooth'
                     }});
-                """, timeout=3, default=None)
+                """, timeout=2, default=None)
             else:
-                await safe_evaluate(page, f"window.scrollTo(0, {scroll_to});", timeout=3, default=None)
+                await safe_evaluate(page, f"window.scrollTo(0, {scroll_to});", timeout=2, default=None)
 
             await asyncio.sleep(delay)
+            scroll_count += 1
 
         # Scroll back to top
         await safe_evaluate(page, """
@@ -839,20 +922,21 @@ async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
                 top: 0,
                 behavior: 'smooth'
             });
-        """, timeout=3, default=None)
-        await asyncio.sleep(0.3)
+        """, timeout=2, default=None)
+        await asyncio.sleep(0.2)
 
-        log_info("lazy_load_complete", scroll_actions=len(scroll_sequence))
+        total_time = time.time() - start_time
+        log_info("lazy_load_complete", scroll_actions=scroll_count, total_time=round(total_time, 2))
 
     except Exception as e:
         log_error("lazy_load_failed", error=str(e))
-        # Final fallback if everything fails
+        # Final fallback if everything fails - very fast version
         try:
-            await safe_evaluate(page, "window.scrollTo(0, document.body.scrollHeight / 2);", timeout=3, default=None)
-            await asyncio.sleep(0.5)
-            await safe_evaluate(page, "window.scrollTo(0, document.body.scrollHeight);", timeout=3, default=None)
-            await asyncio.sleep(0.5)
-            await safe_evaluate(page, "window.scrollTo(0, 0);", timeout=3, default=None)
+            await safe_evaluate(page, "window.scrollTo(0, document.body.scrollHeight / 2);", timeout=2, default=None)
+            await asyncio.sleep(0.3)
+            await safe_evaluate(page, "window.scrollTo(0, document.body.scrollHeight);", timeout=2, default=None)
+            await asyncio.sleep(0.3)
+            await safe_evaluate(page, "window.scrollTo(0, 0);", timeout=2, default=None)
         except Exception as fallback_err:
             log_error("lazy_load_fallback_failed", error=str(fallback_err))
 
@@ -1191,6 +1275,23 @@ async def fetch_page(
                 browser.stop()  # Note: stop() is not async
             except Exception as e:
                 log_error("browser_cleanup_failed", error=str(e))
+
+        # browser.stop() only kills the main Chrome process, not helper processes
+        # Kill ALL remaining Chrome processes with our user-data-dir (renderer, GPU, etc.)
+        if user_data_dir:
+            try:
+                subprocess.run(
+                    ['pkill', '-KILL', '-f', user_data_dir],
+                    timeout=3,
+                    check=False,  # Don't raise if no processes found
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                log_info("chrome_helpers_cleanup", user_data_dir=user_data_dir)
+            except subprocess.TimeoutExpired:
+                log_error("chrome_helpers_cleanup_timeout", user_data_dir=user_data_dir)
+            except Exception as e:
+                log_error("chrome_helpers_cleanup_failed", user_data_dir=user_data_dir, error=str(e))
 
         # Clean up Chrome process if launched in background mode (macOS)
         # Must kill all Chrome processes with our user-data-dir (main + helpers)

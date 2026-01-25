@@ -12,9 +12,6 @@ export default defineConfig({
   // Keep external dependencies external (not bundled)
   external: [
     '@modelcontextprotocol/sdk',
-    '@mozilla/readability',
-    'jsdom',
-    'turndown',
     'zod',
   ],
 });

@@ -134,7 +134,8 @@ async function callPythonFetcher(
       args.push("--wait-for", waitFor);
     }
 
-    logger.info("python_spawn", { url, python: PYTHON_VENV, args: args.join(" "), semaphore: processSemaphore.stats });
+    const { running, queued, max } = processSemaphore.stats;
+    logger.info("python_spawn", { url, python: PYTHON_VENV, args: args.join(" "), semaphore_running: running, semaphore_queued: queued, semaphore_max: max });
 
     const python = spawn(PYTHON_VENV, args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -246,6 +247,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Quick check if HTML appears to have meaningful content.
+ * Strips tags and checks for actual text content.
+ *
+ * @param html - HTML to check
+ * @returns true if HTML appears to have meaningful content (>50 chars of text)
+ */
+function hasContent(html: string): boolean {
+  if (!html || typeof html !== "string") {
+    return false;
+  }
+
+  // Strip HTML tags and check text content length
+  const textContent = html.replace(/<[^>]*>/g, "").trim();
+  return textContent.length > 50;
+}
+
+/**
  * Extracts domain from URL for rate limiting
  */
 function extractDomain(urlString: string): string {
@@ -309,8 +327,8 @@ async function fetchWithRetry(
 
     const result = await callPythonFetcher(url, format, timeout, waitFor, humanMode);
 
-    // Success - return result
-    if (!result.error || result.html.length > 100) {
+    // Success - return result if no error or if we got meaningful content despite error
+    if (!result.error || hasContent(result.html)) {
       return result;
     }
 
