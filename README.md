@@ -33,31 +33,6 @@ That's it. Your agents now have access to the `fetch` and `fetch_batch` tools.
 
 ---
 
-## Development
-
-Clone and build locally:
-
-```bash
-git clone https://github.com/AzaaliDev/turbowebfetch.git
-cd turbowebfetch
-npm install
-npm run build
-```
-
-Python setup (virtual environment + nodriver) runs automatically during `npm install`. If it fails, run manually:
-
-```bash
-npm run setup:python
-```
-
-Then register with Claude Code:
-
-```bash
-claude mcp add turbowebfetch node /path/to/turbowebfetch/dist/index.js
-```
-
----
-
 ## What This Is (And Isn't)
 
 TurboWebFetch helps your AI agents access content **you have the right to access**. It renders JavaScript-heavy pages that standard tools cannot handle.
@@ -212,6 +187,31 @@ Some sites require interactive verification that automated browsers cannot compl
 5. Browser closes, process exits
 
 Each fetch is isolated. No cookies or state persist between requests.
+
+---
+
+## Development
+
+Clone and build locally:
+
+```bash
+git clone https://github.com/AzaaliDev/turbowebfetch.git
+cd turbowebfetch
+npm install
+npm run build
+```
+
+Python setup (virtual environment + nodriver) runs automatically during `npm install`. If it fails, run manually:
+
+```bash
+npm run setup:python
+```
+
+Then register with Claude Code:
+
+```bash
+claude mcp add turbowebfetch node /path/to/turbowebfetch/dist/index.js
+```
 
 ---
 
