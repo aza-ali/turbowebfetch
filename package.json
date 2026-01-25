@@ -9,11 +9,13 @@
   "type": "module",
   "files": [
     "dist",
-    "python/*.py",
-    "python/*.txt",
-    "python/*.sh",
-    "python/*.md",
-    "scripts"
+    "python/fetcher.py",
+    "python/human_mouse.py",
+    "python/human_scroll.py",
+    "python/human_timing.py",
+    "python/requirements.txt",
+    "python/setup.sh",
+    "scripts/postinstall.js"
   ],
   "scripts": {
     "build": "tsup",

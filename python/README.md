@@ -17,7 +17,7 @@ Nodriver provides:
 2. Run the setup script:
 
 ```bash
-cd /Users/azaali/CascadeProjects/turbowebfetch/python
+cd python
 ./setup.sh
 ```
 
