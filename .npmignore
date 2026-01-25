@@ -1,0 +1,31 @@
+# Python virtual environment (created at install time)
+python/venv/
+python/__pycache__/
+
+# Development files
+src/
+*.ts
+!*.d.ts
+tsconfig.json
+.eslintrc*
+vitest.config.*
+
+# Documentation (not needed for runtime)
+*.md
+!README.md
+docs/
+
+# Test files
+**/*.test.*
+**/*.spec.*
+python/test_*.sh
+
+# Git and editor files
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Other
+.env*
+*.log

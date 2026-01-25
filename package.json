@@ -3,7 +3,18 @@
   "version": "1.0.0",
   "description": "Turn websites into LLM-ready data, locally. Handles dynamic JS, Cloudflare, and rendering automatically. 14 parallel browsers. Zero API keys.",
   "main": "dist/index.js",
+  "bin": {
+    "turbowebfetch": "dist/index.js"
+  },
   "type": "module",
+  "files": [
+    "dist",
+    "python/*.py",
+    "python/*.txt",
+    "python/*.sh",
+    "python/*.md",
+    "scripts"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
@@ -13,7 +24,7 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "setup:python": "bash python/setup.sh",
-    "postinstall": "echo \"\nTurboWebFetch — Turn websites into LLM-ready data, locally.\n\nReliably fetches content where standard tools fail. Handles dynamic JS,\nCloudflare challenges, and rendering automatically. 14 parallel browsers.\nZero API keys.\n\nBy Mourtaza Ali | mourtaza.com\n\nRun 'npm run setup:python' to complete setup.\n\""
+    "postinstall": "node scripts/postinstall.js"
   },
   "keywords": [
     "mcp",
