@@ -1,8 +1,8 @@
 # TurboWebFetch
 
-**Real browsers. Real content. No detection.**
+**Real browsers. Real content. Full fidelity.**
 
-Your AI agents need to read web pages. Documentation, product info, articles, research. But standard fetch tools use plain HTTP - they get blocked by Cloudflare, can't render JavaScript, and return empty shells.
+Your AI agents need to read web pages. Documentation, product info, articles, research. But standard fetch tools use plain HTTP - they cannot handle modern client-side rendering or bot mitigation layers, and return empty shells.
 
 TurboWebFetch runs actual Chrome browsers. Your agents see what users see.
 
@@ -49,7 +49,7 @@ TurboWebFetch helps you access content **you have the right to access**. It rend
 - High-volume data harvesting (rate-limited by design)
 - Violating websites' Terms of Service
 
-The bot-detection handling exists because many legitimate sites use blanket blocking that prevents even authorized access. If a site blocks you and you don't have permission to access it, respect that.
+The challenge-handling exists because many legitimate sites use broad bot mitigation that affects even authorized access. If a site restricts access and you don't have permission, respect that.
 
 ---
 
@@ -59,8 +59,8 @@ The bot-detection handling exists because many legitimate sites use blanket bloc
 |----------|----------|---------------|
 | Static HTML pages | Works | Works (overkill) |
 | JavaScript SPAs | Empty content | Full render |
-| Cloudflare-protected | Blocked | Handled automatically |
-| DataDome-protected | Blocked | Handled automatically |
+| Sites with JS challenges | Fails | Negotiates automatically |
+| Bot mitigation layers | Fails | Negotiates automatically |
 | Parallel agents | One at a time | 14 simultaneous browsers |
 | JS-heavy sites (docs, e-commerce) | Blocked or empty | Works |
 
@@ -119,9 +119,9 @@ The tool auto-detects when content has loaded. Use `wait_for` only if auto-detec
 
 **Sites that don't work:**
 - **Login-required content** - This tool doesn't handle authentication
-- **Interactive CAPTCHAs** - It handles JS challenges, not "click all the boats"
-- **Zillow** - Aggressive interactive challenges
-- **Bloomberg** - Robot verification wall
+- **Interactive CAPTCHAs** - It handles JS challenges, not image selection tasks
+- **Zillow** - Requires interactive verification
+- **Bloomberg** - Requires interactive verification
 
 **Performance:**
 - Adds 5-8 seconds per page (browser startup + rendering + human-like behavior)
@@ -172,9 +172,9 @@ mcp__turbo_web_fetch__fetch(
 )
 ```
 
-**"Getting blocked on [site]"**
+**"Page not loading on [site]"**
 
-Some sites have aggressive detection that even real browsers can't bypass. Open an issue with the URL.
+Some sites require interactive verification that automated browsers cannot complete. Open an issue with the URL.
 
 ---
 
@@ -182,7 +182,7 @@ Some sites have aggressive detection that even real browsers can't bypass. Open 
 
 1. Your agent calls the MCP tool
 2. TurboWebFetch spawns a Python process with Chrome (via nodriver)
-3. Chrome loads the page, executes JavaScript, handles any challenges
+3. Chrome loads the page, executes JavaScript, negotiates any browser challenges
 4. Content is extracted and returned as clean text/markdown/HTML
 5. Browser closes, process exits
 
