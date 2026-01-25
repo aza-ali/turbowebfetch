@@ -62,7 +62,13 @@ async def safe_evaluate(page, script: str, timeout: float = EVALUATE_TIMEOUT, de
         Result of evaluation, or default on timeout/error
     """
     try:
-        return await asyncio.wait_for(page.evaluate(script), timeout=timeout)
+        result = await asyncio.wait_for(page.evaluate(script), timeout=timeout)
+        # nodriver can return ExceptionDetails objects on JS errors instead of raising
+        # Check if result is an error object (has 'exceptionId' or similar attributes)
+        if result is not None and hasattr(result, 'exceptionId'):
+            log_error("js_exception_details", script=script[:50])
+            return default
+        return result
     except asyncio.TimeoutError:
         return default
     except Exception:
@@ -567,15 +573,16 @@ def extract_text_content(html: str, title: str, inner_text: Optional[str] = None
         is_suspicious = any(phrase in text_lower for phrase in suspicious_phrases)
 
         # Fallback to innerText if content is short OR looks like cookie banner
-        if (len(text) < 500 or is_suspicious) and inner_text and len(inner_text) > len(text):
+        # Validate inner_text is a string (nodriver can return ExceptionDetails on JS errors)
+        if inner_text and isinstance(inner_text, str) and (len(text) < 500 or is_suspicious) and len(inner_text) > len(text):
             log_info("using_innertext_fallback", readability_len=len(text), innertext_len=len(inner_text), suspicious=is_suspicious)
             text = inner_text.strip()
 
         return f"{title}\n\n{text}" if title else text
     except Exception as e:
         log_error("text_extraction_failed", error=str(e))
-        # Fallback to innerText if available, else simple tag stripping
-        if inner_text:
+        # Fallback to innerText if available and is a string, else simple tag stripping
+        if inner_text and isinstance(inner_text, str):
             return f"{title}\n\n{inner_text.strip()}" if title else inner_text.strip()
         import re
         text = re.sub(r'<[^>]+>', '', html)
@@ -611,7 +618,8 @@ def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = 
         is_suspicious = any(phrase in md_lower for phrase in suspicious_phrases)
 
         # Fallback to innerText if content is short OR looks like cookie banner
-        if (len(markdown) < 500 or is_suspicious) and inner_text and len(inner_text) > len(markdown):
+        # Validate inner_text is a string (nodriver can return ExceptionDetails on JS errors)
+        if inner_text and isinstance(inner_text, str) and (len(markdown) < 500 or is_suspicious) and len(inner_text) > len(markdown):
             log_info("using_innertext_fallback_md", readability_len=len(markdown), innertext_len=len(inner_text), suspicious=is_suspicious)
             markdown = inner_text.strip()
 
