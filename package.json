@@ -43,6 +43,14 @@
   ],
   "author": "Mourtaza Ali <aza.a.ali@gmail.com> (https://mourtaza.com)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AzaaliDev/turbowebfetch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AzaaliDev/turbowebfetch/issues"
+  },
+  "homepage": "https://github.com/AzaaliDev/turbowebfetch#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.22.0"
