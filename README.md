@@ -2,7 +2,7 @@
 
 **Real browsers. Real content. No detection.**
 
-Your AI agents need to read web pages. Job listings, documentation, articles. But standard fetch tools use plain HTTP - they get blocked by Cloudflare, can't render JavaScript, and return empty shells.
+Your AI agents need to read web pages. Documentation, product info, articles, research. But standard fetch tools use plain HTTP - they get blocked by Cloudflare, can't render JavaScript, and return empty shells.
 
 TurboWebFetch runs actual Chrome browsers. Your agents see what users see.
 
@@ -38,10 +38,10 @@ That's it. Your agents now have access to `turbo_web_fetch`.
 TurboWebFetch helps you access content **you have the right to access**. It renders JavaScript-heavy pages that standard tools cannot handle.
 
 **It is for:**
-- Reading job postings you're applying to
-- Fetching documentation that requires JS rendering
-- Research on publicly accessible content
-- Personal automation and accessibility
+- Fetching documentation that requires JS rendering (React, Stripe, etc.)
+- Product research on e-commerce sites
+- Reading articles and news behind JS walls
+- Multi-source research for your AI agents
 
 **It is not for:**
 - Circumventing paywalls
@@ -62,7 +62,7 @@ The bot-detection handling exists because many legitimate sites use blanket bloc
 | Cloudflare-protected | Blocked | Handled automatically |
 | DataDome-protected | Blocked | Handled automatically |
 | Parallel agents | One at a time | 14 simultaneous browsers |
-| LinkedIn, Indeed, Greenhouse | Blocked or empty | Works |
+| JS-heavy sites (docs, e-commerce) | Blocked or empty | Works |
 
 **Rule of thumb:** Use WebFetch for simple pages. Use TurboWebFetch when that fails.
 
@@ -72,16 +72,16 @@ The bot-detection handling exists because many legitimate sites use blanket bloc
 
 **Single page:**
 ```
-mcp__turbo_web_fetch__fetch(url: "https://boards.greenhouse.io/company/jobs/123", format: "text")
+mcp__turbo_web_fetch__fetch(url: "https://react.dev/learn", format: "markdown")
 ```
 
 **Response:**
 ```json
 {
   "success": true,
-  "url": "https://boards.greenhouse.io/company/jobs/123",
-  "title": "Software Engineer - Company",
-  "content": "About the role\n\nWe're looking for...",
+  "url": "https://react.dev/learn",
+  "title": "Quick Start - React",
+  "content": "# Quick Start\n\nWelcome to the React documentation...",
   "status": 200
 }
 ```
@@ -90,9 +90,9 @@ mcp__turbo_web_fetch__fetch(url: "https://boards.greenhouse.io/company/jobs/123"
 ```
 mcp__turbo_web_fetch__fetch_batch(
   urls: [
-    "https://boards.greenhouse.io/company/jobs/123",
-    "https://jobs.lever.co/company/456",
-    "https://www.indeed.com/viewjob?jk=abc123"
+    "https://react.dev/learn",
+    "https://nextjs.org/docs",
+    "https://www.target.com/p/some-product"
   ],
   format: "text"
 )
@@ -128,7 +128,7 @@ The tool auto-detects when content has loaded. Use `wait_for` only if auto-detec
 - Memory usage: ~200-400MB per browser instance
 - For 14 parallel fetches, expect ~4GB RAM usage
 
-**Not for scale:** This is a user assistant, not a scraping service. Rate-limited to 60 requests/minute per domain (lower for strict sites like LinkedIn).
+**Not for scale:** This is a user assistant, not a scraping service. Rate-limited to 60 requests/minute per domain.
 
 ---
 
