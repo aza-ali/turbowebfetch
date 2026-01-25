@@ -116,7 +116,7 @@ async def safe_get_content(page, timeout: float = CONTENT_TIMEOUT) -> str:
                 page.evaluate("document.documentElement.outerHTML"),
                 timeout=5
             ) or ""
-        except:
+        except Exception:
             return ""
     except Exception:
         return ""
@@ -855,111 +855,6 @@ async def dismiss_overlays(page, human: Optional[HumanBehavior] = None, max_dism
             log_info("overlay_dismissal_complete", total_dismissed=dismissed_count)
     except Exception as e:
         log_error("overlay_dismissal_failed", error=str(e))
-
-
-async def wait_for_content_stabilization(page, timeout: float = 10.0, stability_threshold: float = 2.0) -> bool:
-    """
-    Wait for page content to stabilize by polling content metrics.
-
-    This is used when no explicit wait_for selector is provided. Uses simple polling
-    instead of mutation observers for reliability across different JS frameworks.
-
-    Args:
-        page: Nodriver page object
-        timeout: Maximum seconds to wait for stabilization (default 10s)
-        stability_threshold: Seconds of stable content before considering done (default 2.0s)
-
-    Returns:
-        True if content stabilized, False if timeout
-    """
-    start_time = time.time()
-    MIN_CONTENT_LENGTH = 1000  # Minimum text length to consider page "loaded"
-    MIN_ELEMENT_COUNT = 100    # Minimum elements for a real page
-    check_interval = 0.5
-
-    last_text_length = 0
-    last_element_count = 0
-    stable_since = None
-
-    log_info("stabilization_start", timeout=timeout, min_content=MIN_CONTENT_LENGTH, min_elements=MIN_ELEMENT_COUNT)
-
-    while (time.time() - start_time) < timeout:
-        # Simple direct check of page state
-        state = await safe_evaluate(page, """
-        (() => {
-            const textLen = document.body?.innerText?.length || 0;
-            const elemCount = document.querySelectorAll('*').length;
-
-            // Check for loading indicators
-            const loadingSelectors = [
-                '[class*="loading"]', '[class*="spinner"]', '[class*="skeleton"]',
-                '[class*="shimmer"]', '[aria-busy="true"]', '.loading', '.spinner'
-            ];
-            let isLoading = false;
-            for (const sel of loadingSelectors) {
-                try {
-                    const els = document.querySelectorAll(sel);
-                    for (const el of els) {
-                        if (el.offsetParent !== null) {
-                            isLoading = true;
-                            break;
-                        }
-                    }
-                } catch(e) {}
-                if (isLoading) break;
-            }
-
-            return { textLen, elemCount, isLoading };
-        })();
-        """, timeout=3, default=None)
-
-        if state is None or not isinstance(state, dict):
-            await asyncio.sleep(check_interval)
-            continue
-
-        text_length = state.get('textLen', 0)
-        element_count = state.get('elemCount', 0)
-        is_loading = state.get('isLoading', False)
-
-        elapsed = time.time() - start_time
-
-        # Log every 2 seconds
-        if int(elapsed * 2) % 2 == 0:
-            log_info("stabilization_poll",
-                    elapsed_s=round(elapsed, 1),
-                    text_len=text_length,
-                    elements=element_count,
-                    loading=is_loading)
-
-        # Check if we have enough content and it's stable
-        has_content = text_length >= MIN_CONTENT_LENGTH
-        has_elements = element_count >= MIN_ELEMENT_COUNT
-        is_stable = (text_length == last_text_length and
-                    element_count == last_element_count and
-                    not is_loading)
-
-        if has_content and has_elements and is_stable:
-            if stable_since is None:
-                stable_since = time.time()
-            elif (time.time() - stable_since) >= stability_threshold:
-                log_info("content_stabilized",
-                        elapsed_s=round(elapsed, 2),
-                        text_length=text_length,
-                        element_count=element_count)
-                return True
-        else:
-            stable_since = None
-
-        last_text_length = text_length
-        last_element_count = element_count
-        await asyncio.sleep(check_interval)
-
-    elapsed = time.time() - start_time
-    log_info("stabilization_timeout",
-            elapsed_s=round(elapsed, 2),
-            final_text_len=last_text_length,
-            final_elements=last_element_count)
-    return False
 
 
 async def lazy_load_content(page, human: Optional[HumanBehavior] = None, max_scroll_time: float = 8.0):
