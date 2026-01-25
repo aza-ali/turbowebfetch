@@ -27,8 +27,8 @@
     "typecheck": "tsc --noEmit",
     "setup:python": "bash python/setup.sh",
     "postinstall": "node scripts/postinstall.js",
-    "prepublishOnly": "cp README.md README.github.md && cp README.npm.md README.md",
-    "postpublish": "mv README.github.md README.md"
+    "prepublishOnly": "cp README.npm.md README.md && rm README.npm.md",
+    "postpublish": "git checkout README.md README.npm.md"
   },
   "keywords": [
     "mcp",
