@@ -33,6 +33,25 @@ That's it. Your agents now have access to the `fetch` and `fetch_batch` tools.
 
 ---
 
+## Development
+
+Clone and build locally:
+
+```bash
+git clone https://github.com/AzaaliDev/turbowebfetch.git
+cd turbowebfetch
+npm install
+npm run build
+```
+
+Then register with Claude Code:
+
+```bash
+claude mcp add turbo-web-fetch node /path/to/turbowebfetch/dist/index.js
+```
+
+---
+
 ## What This Is (And Isn't)
 
 TurboWebFetch helps your AI agents access content **you have the right to access**. It renders JavaScript-heavy pages that standard tools cannot handle.
