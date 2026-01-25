@@ -35,7 +35,7 @@ That's it. Your agents now have access to `turbo_web_fetch`.
 
 ## What This Is (And Isn't)
 
-TurboWebFetch helps you access content **you have the right to access**. It renders JavaScript-heavy pages that standard tools cannot handle.
+TurboWebFetch helps your AI agents access content **you have the right to access**. It renders JavaScript-heavy pages that standard tools cannot handle.
 
 **It is for:**
 - Fetching documentation that requires JS rendering (React, Stripe, etc.)
