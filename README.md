@@ -1,99 +1,197 @@
 # TurboWebFetch
 
-> **Turn websites into LLM-ready data, locally.**
->
-> Reliably fetches content where standard tools fail. Handles dynamic JS, Cloudflare challenges, and rendering automatically.
-> **14 parallel browsers. Zero API keys.**
+**Real browsers. Real content. No detection.**
+
+Your AI agents need to read web pages. Job listings, documentation, articles. But standard fetch tools use plain HTTP - they get blocked by Cloudflare, can't render JavaScript, and return empty shells.
+
+TurboWebFetch runs actual Chrome browsers. Your agents see what users see.
+
+**14 parallel browsers. Zero API keys. Runs locally.**
 
 ---
 
-### Why TurboWebFetch?
+## Prerequisites
 
-Most fetch tools fail on modern sites because they are just HTTP—no JavaScript, no rendering. TurboWebFetch gives every agent its own **headless browser cluster**, running in parallel to return clean content as fast as your agents can think.
+Before installing, verify you have:
 
-* **Auto-Managed:** Automatically handles Cloudflare & DataDome challenges.
-* **Invisible:** Uses `nodriver` (undetected Chrome) technology to bypass bot detection.
-* **Parallel:** Fetch up to 14 pages simultaneously (configurable).
-* **Local:** Runs 100% on your machine. No API keys, no per-page costs.
+```bash
+node --version    # Need 18+
+python3 --version # Need 3.8+
+```
+
+Google Chrome must be installed (not Chromium).
 
 ---
 
-### Quick Start
-
-**Add to Claude Code (Recommended)**
-
-One command to install and register:
+## Quick Start
 
 ```bash
 claude mcp add turbo-web-fetch npx -y turbowebfetch
 ```
 
-**Prerequisites:** Node.js 18+, Python 3.8+, Google Chrome.
+That's it. Your agents now have access to `turbo_web_fetch`.
 
 ---
 
-### Comparison
+## What This Is (And Isn't)
 
-| Capability | TurboWebFetch | WebFetch (Standard) | Chrome MCP |
-|------------|---------------|---------------------|------------|
-| JS Rendering | Yes | No | Yes |
-| Parallelism | Up to 14 | 1 Request | 1 Tab |
-| Anti-Bot Bypass | Auto-Managed | No | Manual |
-| User Interference | None (Headless) | None | Occupied |
+TurboWebFetch helps you access content **you have the right to access**. It renders JavaScript-heavy pages that standard tools cannot handle.
 
----
+**It is for:**
+- Reading job postings you're applying to
+- Fetching documentation that requires JS rendering
+- Research on publicly accessible content
+- Personal automation and accessibility
 
-### Anti-Bot Features
+**It is not for:**
+- Circumventing paywalls
+- Scraping data you don't have permission to collect
+- High-volume data harvesting (rate-limited by design)
+- Violating websites' Terms of Service
 
-TurboWebFetch doesn't just "try" to fetch; it adapts.
-
-* **Cloudflare:** Auto-detects challenges ("Just a moment..."), retries in headed mode, and clicks verification automatically.
-* **DataDome:** Detects block pages (Indeed, etc.) and retries with human-like scrolling and behavior.
-* **macOS Background Mode:** When a "headed" browser is required for verification, it launches hidden in the background. It never steals your focus or clutters your dock.
-
----
-
-### Use Cases
-
-* **Multi-agent research:** 10 agents gathering info from 10 sources, all at once.
-* **Job search:** Parse postings from Indeed, Glassdoor, Greenhouse, Lever, and LinkedIn in parallel.
-* **Documentation:** Read JS-heavy docs (React, Next.js, Stripe) that standard fetchers can't render.
-* **Protected sites:** Access content behind Cloudflare/DataDome that blocks other tools.
+The bot-detection handling exists because many legitimate sites use blanket blocking that prevents even authorized access. If a site blocks you and you don't have permission to access it, respect that.
 
 ---
 
-### Usage
+## WebFetch vs TurboWebFetch
 
-**Single Page (MCP Tool Call)**
+| Scenario | WebFetch | TurboWebFetch |
+|----------|----------|---------------|
+| Static HTML pages | Works | Works (overkill) |
+| JavaScript SPAs | Empty content | Full render |
+| Cloudflare-protected | Blocked | Handled automatically |
+| DataDome-protected | Blocked | Handled automatically |
+| Parallel agents | One at a time | 14 simultaneous browsers |
+| LinkedIn, Indeed, Greenhouse | Blocked or empty | Works |
 
+**Rule of thumb:** Use WebFetch for simple pages. Use TurboWebFetch when that fails.
+
+---
+
+## Usage
+
+**Single page:**
 ```
-mcp__turbo_web_fetch__fetch(url: "https://example.com", format: "markdown")
-```
-
-**Batch / Parallel (MCP Tool Call)**
-
-```
-mcp__turbo_web_fetch__fetch_batch(urls: [
-  "https://www.linkedin.com/jobs/view/...",
-  "https://www.glassdoor.com/job/...",
-  "https://www.indeed.com/viewjob?..."
-])
+mcp__turbo_web_fetch__fetch(url: "https://boards.greenhouse.io/company/jobs/123", format: "text")
 ```
 
+**Response:**
+```json
+{
+  "success": true,
+  "url": "https://boards.greenhouse.io/company/jobs/123",
+  "title": "Software Engineer - Company",
+  "content": "About the role\n\nWe're looking for...",
+  "status": 200
+}
+```
+
+**Batch (parallel):**
+```
+mcp__turbo_web_fetch__fetch_batch(
+  urls: [
+    "https://boards.greenhouse.io/company/jobs/123",
+    "https://jobs.lever.co/company/456",
+    "https://www.indeed.com/viewjob?jk=abc123"
+  ],
+  format: "text"
+)
+```
+
+All three fetch simultaneously in separate browsers.
+
 ---
 
-### Configuration
+## Parameters
 
-Optional environment variables to tune performance:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `url` | required | The URL to fetch |
+| `format` | `"text"` | `"text"`, `"markdown"`, or `"html"` |
+| `timeout` | `60000` | Milliseconds. Increase to 90000+ for slow sites |
+| `wait_for` | - | CSS selector to wait for (rarely needed) |
+
+The tool auto-detects when content has loaded. Use `wait_for` only if auto-detection fails on a specific site.
+
+---
+
+## Known Limitations
+
+**Sites that don't work:**
+- **Login-required content** - This tool doesn't handle authentication
+- **Interactive CAPTCHAs** - It handles JS challenges, not "click all the boats"
+- **Zillow** - Aggressive interactive challenges
+- **Bloomberg** - Robot verification wall
+
+**Performance:**
+- Adds 5-8 seconds per page (browser startup + rendering + human-like behavior)
+- Memory usage: ~200-400MB per browser instance
+- For 14 parallel fetches, expect ~4GB RAM usage
+
+**Not for scale:** This is a user assistant, not a scraping service. Rate-limited to 60 requests/minute per domain (lower for strict sites like LinkedIn).
+
+---
+
+## Configuration
+
+Optional environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TURBOFETCH_MAX_PROCESSES` | 14 | Max concurrent browsers. Set higher for powerful machines. |
-| `TURBOFETCH_HEADLESS` | true | Start invisible. Auto-switches to visible if blocked. |
-| `TURBOFETCH_HUMAN_MODE` | true | Enable human-like scrolling/delays for protected sites. |
+| `TURBOFETCH_MAX_PROCESSES` | `14` | Max concurrent browsers |
+| `TURBOFETCH_HUMAN_MODE` | `true` | Human-like scrolling/delays |
+| `TURBOFETCH_HEADLESS` | `true` | Headless mode (auto-switches if blocked) |
+
+Most users won't need to change these.
 
 ---
 
-### License
+## Troubleshooting
 
-MIT © [Mourtaza Ali](https://mourtaza.com)
+**"Python not found"**
+```bash
+# macOS
+brew install python3
+
+# Ubuntu/Debian
+sudo apt install python3 python3-venv
+```
+
+**"Chrome not launching"**
+
+Install Google Chrome from https://google.com/chrome (not Chromium).
+
+**"Content is empty"**
+
+Some heavily lazy-loaded sites need an explicit selector:
+```
+mcp__turbo_web_fetch__fetch(
+  url: "https://www.bestbuy.com/site/searchpage.jsp?st=laptop",
+  wait_for: "[class*=\"product\"]",
+  timeout: 90000
+)
+```
+
+**"Getting blocked on [site]"**
+
+Some sites have aggressive detection that even real browsers can't bypass. Open an issue with the URL.
+
+---
+
+## How It Works
+
+1. Your agent calls the MCP tool
+2. TurboWebFetch spawns a Python process with Chrome (via nodriver)
+3. Chrome loads the page, executes JavaScript, handles any challenges
+4. Content is extracted and returned as clean text/markdown/HTML
+5. Browser closes, process exits
+
+Each fetch is isolated. No cookies or state persist between requests.
+
+---
+
+## License
+
+MIT - do whatever you want with it.
+
+Copyright (c) 2026 [Mourtaza Ali](https://mourtaza.com)
