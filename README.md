@@ -211,6 +211,6 @@ Each fetch is isolated. No cookies or state persist between requests.
 
 ## License
 
-MIT - do whatever you want with it.
+MIT License. See [LICENSE](./LICENSE) for details.
 
 Copyright (c) 2026 [Mourtaza Ali](https://mourtaza.com)
