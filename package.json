@@ -1,7 +1,7 @@
 {
   "name": "turbowebfetch",
   "version": "1.0.0",
-  "description": "Every agent gets its own browser. 14 agents? 14 browsers - all running in parallel at AI speed. Works where vanilla automation fails.",
+  "description": "Turn websites into LLM-ready data, locally. Handles dynamic JS, Cloudflare, and rendering automatically. 14 parallel browsers. Zero API keys.",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "setup:python": "bash python/setup.sh",
-    "postinstall": "echo \"\nTurboWebFetch - every agent gets its own browser\nBy Mourtaza Ali | mourtaza.com\n\nRun 'npm run setup:python' to install Python/nodriver support.\n\""
+    "postinstall": "echo \"\nTurboWebFetch — Turn websites into LLM-ready data, locally.\n\nReliably fetches content where standard tools fail. Handles dynamic JS,\nCloudflare challenges, and rendering automatically. 14 parallel browsers.\nZero API keys.\n\nBy Mourtaza Ali | mourtaza.com\n\nRun 'npm run setup:python' to complete setup.\n\""
   },
   "keywords": [
     "mcp",
