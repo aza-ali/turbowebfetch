@@ -22,7 +22,7 @@ export interface RateLimitConfig {
 
 /** Timeout configuration */
 export interface TimeoutConfig {
-  /** Page navigation timeout in ms (TURBOFETCH_NAV_TIMEOUT, default: 30000) */
+  /** Page navigation timeout in ms (TURBOFETCH_NAV_TIMEOUT, default: 60000) */
   navigation: number;
   /** Wait-for-selector timeout in ms (TURBOFETCH_WAIT_TIMEOUT, default: 10000) */
   waitFor: number;
@@ -116,7 +116,7 @@ export function getDefaultConfig(): Config {
       defaultRpm: 60,
     },
     timeouts: {
-      navigation: 30000,
+      navigation: 60000,
       waitFor: 10000,
     },
     browser: {
@@ -152,7 +152,7 @@ export function loadConfig(): Config {
       defaultRpm: parseEnvInt('TURBOFETCH_DEFAULT_RPM', 60),
     },
     timeouts: {
-      navigation: parseEnvInt('TURBOFETCH_NAV_TIMEOUT', 30000),
+      navigation: parseEnvInt('TURBOFETCH_NAV_TIMEOUT', 60000),
       waitFor: parseEnvInt('TURBOFETCH_WAIT_TIMEOUT', 10000),
     },
     browser: {

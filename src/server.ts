@@ -54,8 +54,8 @@ const FETCH_TOOL: Tool = {
       },
       timeout: {
         type: "number",
-        default: 30000,
-        description: "Timeout in milliseconds (default: 30000, max: 120000)",
+        default: 60000,
+        description: "Timeout in milliseconds (default: 60000, max: 120000)",
       },
       human_mode: {
         type: "boolean",
@@ -92,8 +92,8 @@ const FETCH_BATCH_TOOL: Tool = {
       },
       timeout: {
         type: "number",
-        default: 30000,
-        description: "Timeout in milliseconds per URL (default: 30000)",
+        default: 60000,
+        description: "Timeout in milliseconds per URL (default: 60000)",
       },
       human_mode: {
         type: "boolean",

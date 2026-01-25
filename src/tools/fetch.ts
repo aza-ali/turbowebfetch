@@ -11,8 +11,7 @@
  */
 
 import { spawn } from "child_process";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { dirname } from "path";
 import type {
   FetchOptions,
   FetchResponse,
@@ -29,14 +28,11 @@ import { rateLimiter } from "../rate-limit/limiter.js";
 import { logger } from "../utils/logger.js";
 import { config as appConfig } from "../utils/config.js";
 
-// Get the directory of this file
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Path to Python script and venv
-const PYTHON_DIR = join(__dirname, "../../python");
-const PYTHON_SCRIPT = join(PYTHON_DIR, "fetcher.py");
-const PYTHON_VENV = join(PYTHON_DIR, "venv/bin/python");
+// Get Python paths from centralized config (handles bundling correctly)
+const pythonConfig = getDefaultConfig();
+const PYTHON_VENV = pythonConfig.python.pythonPath;
+const PYTHON_SCRIPT = pythonConfig.python.fetcherScript;
+const PYTHON_DIR = dirname(PYTHON_SCRIPT);
 
 // Get timeout configuration
 const config = getDefaultConfig();

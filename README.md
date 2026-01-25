@@ -1,102 +1,99 @@
 # TurboWebFetch
 
-AI agents aren't bots, and they shouldn't pretend to be human. They should work at AI speed - not waiting on screenshots, not slowly navigating your Chrome tab by tab. Running 5 agents? Each one gets its own browser. Running 14? Same thing. TurboWebFetch gives every agent its own headless browser, all running in parallel, returning content as fast as your agents can think.
+> **Turn websites into LLM-ready data, locally.**
+>
+> Reliably fetches content where standard tools fail. Handles dynamic JS, Cloudflare challenges, and rendering automatically.
+> **14 parallel browsers. Zero API keys.**
 
-Regular WebFetch fails on modern sites because it's just HTTP - no JavaScript, no rendering. Sites block scripts and scrapers, not browsers. TurboWebFetch runs real browsers, so your agents see what users actually see.
+---
 
-## Quick Comparison
+### Why TurboWebFetch?
 
-| Tool | JS Rendering | Parallel | Your Screen | Best For |
-|------|--------------|----------|-------------|----------|
-| WebFetch | No | No | Free | Simple static HTML |
-| Chrome MCP | Yes | No | Taken over | Interactive tasks |
-| TurboWebFetch | Yes | 14 browsers | Free | Content retrieval at scale |
+Most fetch tools fail on modern sites because they are just HTTP—no JavaScript, no rendering. TurboWebFetch gives every agent its own **headless browser cluster**, running in parallel to return clean content as fast as your agents can think.
 
-## Works Where Vanilla Automation Fails
+* **Auto-Managed:** Automatically handles Cloudflare & DataDome challenges.
+* **Invisible:** Uses `nodriver` (undetected Chrome) technology to bypass bot detection.
+* **Parallel:** Fetch up to 14 pages simultaneously (configurable).
+* **Local:** Runs 100% on your machine. No API keys, no per-page costs.
 
-Most automation tools ship with detectable fingerprints. TurboWebFetch uses Nodriver (undetected Chrome) with realistic human-like behavior - so you get content from sites that block obvious automation.
+---
 
-**Auto-bypasses anti-bot protection:**
-- **Cloudflare** - Auto-detects challenges, retries in headed mode, clicks verification
-- **DataDome** - Auto-detects blocks (Indeed, etc.), retries with human behavior
+### Quick Start
 
-**On macOS:** Headed retries run in background - Chrome launches hidden without stealing focus or appearing on screen. Your workflow stays uninterrupted.
+**Add to Claude Code (Recommended)**
 
-| Capability | TurboWebFetch | fetcher-mcp | concurrent-browser-mcp |
-|------------|---------------|-------------|------------------------|
-| Parallel browsers | ✅ | ✅ | ✅ |
-| JS rendering | ✅ | ✅ | ✅ |
-| Cloudflare bypass | ✅ | ❌ | ❌ |
-| DataDome bypass | ✅ | ❌ | ❌ |
-| Realistic browser config | ✅ | ❌ | ❌ |
-| Cookie banner handling | ✅ | ❌ | ❌ |
-| Human-like scrolling | ✅ | ❌ | ❌ |
-| Background headed mode | ✅ | ❌ | ❌ |
-
-## Installation
-
-**Requirements:** Node.js 18+, Python 3.8+, Google Chrome installed
+One command to install and register:
 
 ```bash
-# Clone and build
-git clone https://github.com/aza-ali/turbowebfetch.git
-cd turbowebfetch
-npm install
-npm run setup:python    # Install Python/Nodriver dependencies
-npm run build
-
-# Register with Claude Code
-claude mcp add turbo-web-fetch node /path/to/turbowebfetch/dist/index.js
+claude mcp add turbo-web-fetch npx -y turbowebfetch
 ```
 
-Restart Claude Code after registering.
+**Prerequisites:** Node.js 18+, Python 3.8+, Google Chrome.
 
-## Usage
+---
 
-### Single URL
+### Comparison
+
+| Capability | TurboWebFetch | WebFetch (Standard) | Chrome MCP |
+|------------|---------------|---------------------|------------|
+| JS Rendering | Yes | No | Yes |
+| Parallelism | Up to 14 | 1 Request | 1 Tab |
+| Anti-Bot Bypass | Auto-Managed | No | Manual |
+| User Interference | None (Headless) | None | Occupied |
+
+---
+
+### Anti-Bot Features
+
+TurboWebFetch doesn't just "try" to fetch; it adapts.
+
+* **Cloudflare:** Auto-detects challenges ("Just a moment..."), retries in headed mode, and clicks verification automatically.
+* **DataDome:** Detects block pages (Indeed, etc.) and retries with human-like scrolling and behavior.
+* **macOS Background Mode:** When a "headed" browser is required for verification, it launches hidden in the background. It never steals your focus or clutters your dock.
+
+---
+
+### Use Cases
+
+* **Multi-agent research:** 10 agents gathering info from 10 sources, all at once.
+* **Job search:** Parse postings from Indeed, Glassdoor, Greenhouse, Lever, and LinkedIn in parallel.
+* **Documentation:** Read JS-heavy docs (React, Next.js, Stripe) that standard fetchers can't render.
+* **Protected sites:** Access content behind Cloudflare/DataDome that blocks other tools.
+
+---
+
+### Usage
+
+**Single Page (MCP Tool Call)**
 
 ```
 mcp__turbo_web_fetch__fetch(url: "https://example.com", format: "markdown")
 ```
 
-**Parameters:**
-- `url` (required) - URL to fetch
-- `format` - "html", "text", or "markdown" (default: "markdown")
-- `timeout` - milliseconds (default: 30000, max: 120000)
-- `waitFor` - CSS selector to wait for before extracting
-
-### Batch (Parallel)
+**Batch / Parallel (MCP Tool Call)**
 
 ```
-mcp__turbo_web_fetch__fetch_batch(urls: ["url1", "url2", ...], format: "text")
+mcp__turbo_web_fetch__fetch_batch(urls: [
+  "https://www.linkedin.com/jobs/view/...",
+  "https://www.glassdoor.com/job/...",
+  "https://www.indeed.com/viewjob?..."
+])
 ```
 
-Fetches up to 14 URLs simultaneously.
+---
 
-## Use Cases
+### Configuration
 
-- **Multi-agent research** - 10 agents gathering info from 10 sources, all at once
-- **Job search** - Parse postings from Indeed, Glassdoor, Greenhouse, Lever, LinkedIn in parallel
-- **Documentation** - Read JS-heavy docs (React, Next.js, Stripe) that WebFetch can't render
-- **Protected sites** - Access content behind Cloudflare/DataDome that blocks other tools
-
-## Configuration
-
-Environment variables (optional):
+Optional environment variables to tune performance:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TURBOFETCH_MAX_PROCESSES` | 14 | Maximum concurrent browser processes |
-| `TURBOFETCH_HEADLESS` | true | Run browsers headless (auto-switches to headed for anti-bot) |
-| `TURBOFETCH_HUMAN_MODE` | true | Enable human-like scrolling/delays |
-| `TURBOFETCH_NAV_TIMEOUT` | 30000 | Navigation timeout (ms) |
-| `TURBOFETCH_DEFAULT_RPM` | 60 | Rate limit per domain (requests/minute) |
+| `TURBOFETCH_MAX_PROCESSES` | 14 | Max concurrent browsers. Set higher for powerful machines. |
+| `TURBOFETCH_HEADLESS` | true | Start invisible. Auto-switches to visible if blocked. |
+| `TURBOFETCH_HUMAN_MODE` | true | Enable human-like scrolling/delays for protected sites. |
 
-## License
+---
 
-MIT - see [LICENSE](LICENSE)
+### License
 
-## Author
-
-**Mourtaza Ali**
-[mourtaza.com](https://mourtaza.com) | [GitHub](https://github.com/aza-ali)
+MIT © [Mourtaza Ali](https://mourtaza.com)

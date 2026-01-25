@@ -6,6 +6,13 @@
  */
 
 import { z } from "zod";
+import { fileURLToPath } from "url";
+import { dirname, resolve } from "path";
+
+// Get project root from this file's location (src/types.ts -> project root)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PROJECT_ROOT = resolve(__dirname, "..");
 
 // =============================================================================
 // Content Formats
@@ -25,7 +32,7 @@ export const FetchOptionsSchema = z.object({
   url: z.string().url("Invalid URL format"),
   format: ContentFormatSchema.optional().default("text"),
   wait_for: z.string().optional(),
-  timeout: z.number().int().positive().max(120000).optional().default(30000),
+  timeout: z.number().int().positive().max(120000).optional().default(60000),
   human_mode: z.boolean().optional(),
 });
 
@@ -40,7 +47,7 @@ export const FetchBatchOptionsSchema = z.object({
     .min(1, "At least one URL is required")
     .max(14, "Maximum 14 URLs per batch"),
   format: ContentFormatSchema.optional().default("text"),
-  timeout: z.number().int().positive().max(120000).optional().default(30000),
+  timeout: z.number().int().positive().max(120000).optional().default(60000),
   human_mode: z.boolean().optional(),
 });
 
@@ -187,15 +194,14 @@ export interface ServerConfig {
  * Default server configuration, can be overridden via environment variables
  */
 export function getDefaultConfig(): ServerConfig {
-  const projectRoot = process.cwd();
   return {
     python: {
-      pythonPath: process.env.TURBOFETCH_PYTHON_PATH || `${projectRoot}/python/venv/bin/python`,
-      fetcherScript: process.env.TURBOFETCH_FETCHER_SCRIPT || `${projectRoot}/python/fetcher.py`,
+      pythonPath: process.env.TURBOFETCH_PYTHON_PATH || `${PROJECT_ROOT}/python/venv/bin/python`,
+      fetcherScript: process.env.TURBOFETCH_FETCHER_SCRIPT || `${PROJECT_ROOT}/python/fetcher.py`,
       maxProcesses: parseInt(process.env.TURBOFETCH_MAX_PROCESSES || "14", 10),
     },
     timeouts: {
-      navigation: parseInt(process.env.TURBOFETCH_NAV_TIMEOUT || "30000", 10),
+      navigation: parseInt(process.env.TURBOFETCH_NAV_TIMEOUT || "60000", 10),
       waitFor: parseInt(process.env.TURBOFETCH_WAIT_TIMEOUT || "10000", 10),
     },
     rateLimiter: {
