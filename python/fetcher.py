@@ -820,10 +820,14 @@ async def fetch_page(
 
         # Launch browser
         # sandbox=False required on macOS, otherwise Chrome fails to start
-        # When headed, position window off-screen to avoid stealing focus
-        browser_args = []
+        # Allocate unique port to avoid conflicts with parallel browser instances
+        port = find_available_port()
+        log_info("browser_port_allocated", port=port, headless=headless)
+
+        # Build browser args
+        browser_args = [f'--remote-debugging-port={port}']
         if not headless:
-            browser_args = ['--window-position=-2400,-2400']
+            browser_args.append('--window-position=-2400,-2400')
             log_info("headed_offscreen_mode", window_position="-2400,-2400")
 
         browser = await uc.start(

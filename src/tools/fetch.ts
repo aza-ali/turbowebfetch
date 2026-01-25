@@ -38,7 +38,54 @@ const PYTHON_DIR = dirname(PYTHON_SCRIPT);
 const config = getDefaultConfig();
 
 /**
+ * Simple semaphore for limiting concurrent Python processes
+ *
+ * This prevents resource exhaustion when multiple agents call fetch()
+ * simultaneously. Without this, each call spawns a Python process + Chrome
+ * instance, quickly overwhelming system resources.
+ */
+class ProcessSemaphore {
+  private queue: Array<() => void> = [];
+  private running = 0;
+
+  constructor(private maxConcurrent: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.running < this.maxConcurrent) {
+      this.running++;
+      return;
+    }
+
+    // Queue the request and wait
+    return new Promise<void>((resolve) => {
+      this.queue.push(() => {
+        this.running++;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    this.running--;
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    }
+  }
+
+  get stats() {
+    return { running: this.running, queued: this.queue.length, max: this.maxConcurrent };
+  }
+}
+
+// Global semaphore - limits concurrent Python processes across all fetch calls
+const processSemaphore = new ProcessSemaphore(config.python.maxProcesses);
+
+/**
  * Call Python nodriver script to fetch a page
+ *
+ * Uses semaphore to limit concurrent Python processes across all fetch calls.
+ * This prevents resource exhaustion when multiple agents fetch simultaneously.
  *
  * @param url - URL to fetch
  * @param format - Output format (html, text, markdown)
@@ -54,9 +101,25 @@ async function callPythonFetcher(
   waitFor?: string,
   humanMode?: boolean
 ): Promise<RawPageContent> {
+  // Acquire semaphore slot before spawning Python process
+  const semaphoreStats = processSemaphore.stats;
+  logger.info("semaphore_acquire", { url, ...semaphoreStats });
+  await processSemaphore.acquire();
+  logger.info("semaphore_acquired", { url, ...processSemaphore.stats });
+
   return new Promise((resolve) => {
     // Use passed value if defined, otherwise fall back to config
     const useHumanMode = humanMode ?? appConfig.browser.humanMode;
+
+    // Track whether semaphore has been released to prevent double-release
+    let semaphoreReleased = false;
+    const releaseSemaphore = () => {
+      if (!semaphoreReleased) {
+        semaphoreReleased = true;
+        processSemaphore.release();
+        logger.info("semaphore_released", { url, ...processSemaphore.stats });
+      }
+    };
 
     const args = [
       PYTHON_SCRIPT,
@@ -71,7 +134,7 @@ async function callPythonFetcher(
       args.push("--wait-for", waitFor);
     }
 
-    logger.info("python_spawn", { url, python: PYTHON_VENV, args: args.join(" ") });
+    logger.info("python_spawn", { url, python: PYTHON_VENV, args: args.join(" "), semaphore: processSemaphore.stats });
 
     const python = spawn(PYTHON_VENV, args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -94,6 +157,7 @@ async function callPythonFetcher(
         url,
         error: error.message,
       });
+      releaseSemaphore();
       resolve({
         html: "",
         title: "",
@@ -109,6 +173,9 @@ async function callPythonFetcher(
       if (stderr) {
         logger.debug("python_stderr", { url, stderr: stderr.slice(0, 500) });
       }
+
+      // Release semaphore slot now that Python process has exited
+      releaseSemaphore();
 
       // Parse JSON output from Python
       // Only use the first line - nodriver outputs cleanup messages on subsequent lines
@@ -152,6 +219,7 @@ async function callPythonFetcher(
     });
 
     // Hard timeout for Python process
+    // Note: Don't release semaphore here - the close event will fire when SIGTERM kills the process
     const timeoutHandle = setTimeout(() => {
       python.kill("SIGTERM");
       logger.warn("python_timeout", { url, timeout });
