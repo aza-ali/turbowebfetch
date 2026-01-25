@@ -35,11 +35,11 @@
     "claude-code",
     "model-context-protocol",
     "nodriver",
-    "cloudflare-bypass",
-    "datadome-bypass",
-    "anti-bot",
-    "stealth",
-    "undetected-browser"
+    "javascript-rendering",
+    "dynamic-content",
+    "headless-chrome",
+    "content-extraction",
+    "web-automation"
   ],
   "author": "Mourtaza Ali <aza.a.ali@gmail.com> (https://mourtaza.com)",
   "license": "MIT",
