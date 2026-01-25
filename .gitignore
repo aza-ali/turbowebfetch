@@ -39,3 +39,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Internal documentation
+CLAUDE.md
+ARCHITECTURE.md
+PRD.md
+DISTRIBUTION.md
+python/INTEGRATION.md
