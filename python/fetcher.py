@@ -1305,13 +1305,12 @@ async def fetch_page(
             except Exception as e:
                 log_error("selector_wait_timeout", selector=wait_for, error=str(e))
         else:
-            # Auto-stabilization: wait for DOM mutations and network to settle
-            # This handles JS-heavy pages like e-commerce sites without needing explicit selectors
-            # Use generous timeout - JS frameworks can take time to hydrate and fetch data
-            stabilization_timeout = min(20.0, timeout / 1000 / 2)  # Use 1/2 of total timeout, max 20s
-            stabilized = await wait_for_content_stabilization(page, timeout=stabilization_timeout)
-            if not stabilized:
-                log_info("auto_stabilization_incomplete", fallback="continuing with available content")
+            # Fixed wait for JS-heavy pages to load content
+            # Auto-stabilization was unreliable due to intermittent evaluate() failures
+            # A simple fixed wait is more reliable for modern JS frameworks
+            fixed_wait = 5.0  # 5 seconds handles most JS rendering
+            log_info("fixed_wait_start", seconds=fixed_wait)
+            await asyncio.sleep(fixed_wait)
 
         # Add reading delay after navigation (human takes time to see page)
         if human:
