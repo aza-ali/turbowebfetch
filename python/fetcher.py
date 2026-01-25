@@ -852,6 +852,156 @@ async def dismiss_overlays(page, human: Optional[HumanBehavior] = None, max_dism
         log_error("overlay_dismissal_failed", error=str(e))
 
 
+async def wait_for_content_stabilization(page, timeout: float = 10.0, stability_threshold: float = 1.5) -> bool:
+    """
+    Wait for page content to stabilize by monitoring DOM mutations and network activity.
+
+    This is used when no explicit wait_for selector is provided. It detects when:
+    1. DOM mutations have stopped (no new elements being added)
+    2. Network requests have settled (no pending XHR/fetch)
+    3. Element count has stabilized
+
+    Args:
+        page: Nodriver page object
+        timeout: Maximum seconds to wait for stabilization (default 10s)
+        stability_threshold: Seconds of no changes before considering stable (default 1.5s)
+
+    Returns:
+        True if content stabilized, False if timeout
+    """
+    start_time = time.time()
+
+    # Inject mutation observer to track DOM changes
+    observer_script = """
+    (() => {
+        if (window.__turboFetchStabilizer) return window.__turboFetchStabilizer;
+
+        const state = {
+            lastMutationTime: Date.now(),
+            mutationCount: 0,
+            pendingRequests: 0,
+            elementCount: document.querySelectorAll('*').length
+        };
+
+        // Track DOM mutations
+        const observer = new MutationObserver((mutations) => {
+            state.lastMutationTime = Date.now();
+            state.mutationCount += mutations.length;
+            state.elementCount = document.querySelectorAll('*').length;
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true
+        });
+
+        // Track network requests (XHR)
+        const origXHROpen = XMLHttpRequest.prototype.open;
+        const origXHRSend = XMLHttpRequest.prototype.send;
+
+        XMLHttpRequest.prototype.open = function() {
+            this.__turboTracked = true;
+            return origXHROpen.apply(this, arguments);
+        };
+
+        XMLHttpRequest.prototype.send = function() {
+            if (this.__turboTracked) {
+                state.pendingRequests++;
+                this.addEventListener('loadend', () => {
+                    state.pendingRequests = Math.max(0, state.pendingRequests - 1);
+                    state.lastMutationTime = Date.now();
+                });
+            }
+            return origXHRSend.apply(this, arguments);
+        };
+
+        // Track fetch requests
+        const origFetch = window.fetch;
+        window.fetch = function() {
+            state.pendingRequests++;
+            return origFetch.apply(this, arguments).finally(() => {
+                state.pendingRequests = Math.max(0, state.pendingRequests - 1);
+                state.lastMutationTime = Date.now();
+            });
+        };
+
+        window.__turboFetchStabilizer = state;
+        return state;
+    })();
+    """
+
+    # Initialize the observer
+    await safe_evaluate(page, observer_script, timeout=5, default=None)
+
+    # Wait a moment for initial content to start loading
+    await asyncio.sleep(0.5)
+
+    # Poll for stabilization
+    check_interval = 0.3
+    last_element_count = 0
+    stable_since = None
+
+    while (time.time() - start_time) < timeout:
+        # Get current state
+        state = await safe_evaluate(page, """
+        (() => {
+            const s = window.__turboFetchStabilizer;
+            if (!s) return { stable: true, elementCount: 0, pendingRequests: 0, timeSinceLastMutation: 999999 };
+            return {
+                stable: false,
+                elementCount: s.elementCount,
+                pendingRequests: s.pendingRequests,
+                timeSinceLastMutation: Date.now() - s.lastMutationTime,
+                mutationCount: s.mutationCount
+            };
+        })();
+        """, timeout=3, default=None)
+
+        if state is None:
+            # Couldn't get state, assume stable
+            log_info("stabilization_state_unavailable")
+            return True
+
+        # Check if state is a dict (not an error object)
+        if not isinstance(state, dict):
+            log_info("stabilization_invalid_state", state_type=str(type(state)))
+            return True
+
+        element_count = state.get('elementCount', 0)
+        pending_requests = state.get('pendingRequests', 0)
+        time_since_mutation = state.get('timeSinceLastMutation', 0)
+
+        # Check stabilization conditions:
+        # 1. No pending network requests
+        # 2. No mutations for stability_threshold seconds
+        # 3. Element count hasn't changed
+
+        is_network_idle = pending_requests == 0
+        is_dom_quiet = time_since_mutation >= (stability_threshold * 1000)
+        is_count_stable = element_count == last_element_count
+
+        if is_network_idle and is_dom_quiet and is_count_stable:
+            if stable_since is None:
+                stable_since = time.time()
+            elif (time.time() - stable_since) >= stability_threshold:
+                elapsed = time.time() - start_time
+                log_info("content_stabilized",
+                        elapsed_s=round(elapsed, 2),
+                        element_count=element_count,
+                        mutation_count=state.get('mutationCount', 0))
+                return True
+        else:
+            stable_since = None
+
+        last_element_count = element_count
+        await asyncio.sleep(check_interval)
+
+    elapsed = time.time() - start_time
+    log_info("stabilization_timeout", elapsed_s=round(elapsed, 2), element_count=last_element_count)
+    return False
+
+
 async def lazy_load_content(page, human: Optional[HumanBehavior] = None, max_scroll_time: float = 8.0):
     """
     Scroll page to trigger lazy-loaded content using human-like behavior.
@@ -1187,7 +1337,7 @@ async def fetch_page(
                 else:
                     log_info("datadome_bypassed", url=url)
 
-        # Wait for specific selector if requested
+        # Wait for specific selector if requested, otherwise auto-stabilize
         if wait_for:
             try:
                 await page.find(wait_for, timeout=timeout / 1000)
@@ -1195,8 +1345,12 @@ async def fetch_page(
             except Exception as e:
                 log_error("selector_wait_timeout", selector=wait_for, error=str(e))
         else:
-            # Default wait for page to be somewhat loaded
-            await asyncio.sleep(1)
+            # Auto-stabilization: wait for DOM mutations and network to settle
+            # This handles JS-heavy pages like e-commerce sites without needing explicit selectors
+            stabilization_timeout = min(10.0, timeout / 1000 / 3)  # Use 1/3 of total timeout, max 10s
+            stabilized = await wait_for_content_stabilization(page, timeout=stabilization_timeout)
+            if not stabilized:
+                log_info("auto_stabilization_incomplete", fallback="continuing with available content")
 
         # Add reading delay after navigation (human takes time to see page)
         if human:

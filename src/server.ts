@@ -32,7 +32,7 @@ import {
 const FETCH_TOOL: Tool = {
   name: "fetch",
   description:
-    "Fetch and render a web page, returning its content. Supports JavaScript rendering for dynamic pages.",
+    "Fetch and render a web page using a real Chrome browser. Handles JavaScript-heavy sites, anti-bot protection, and dynamic content. Auto-detects when content has loaded by monitoring DOM changes and network activity.",
   inputSchema: {
     type: "object",
     properties: {
@@ -50,12 +50,13 @@ const FETCH_TOOL: Tool = {
       wait_for: {
         type: "string",
         description:
-          "Optional CSS selector to wait for before extracting content (useful for dynamic pages)",
+          "CSS selector to wait for before extracting content. Usually not needed - the tool auto-detects content stabilization. Use this only when auto-detection fails and you know the specific element to wait for. Examples: '[class*=\"product\"]' for e-commerce, '.job-card' for job boards, '[data-testid=\"results\"]' for search results.",
       },
       timeout: {
         type: "number",
         default: 60000,
-        description: "Timeout in milliseconds (default: 60000, max: 120000)",
+        description:
+          "Timeout in milliseconds (default: 60000, max: 120000). Increase to 90000+ for slow-loading e-commerce or search result pages.",
       },
       human_mode: {
         type: "boolean",
@@ -73,7 +74,7 @@ const FETCH_TOOL: Tool = {
 const FETCH_BATCH_TOOL: Tool = {
   name: "fetch_batch",
   description:
-    "Fetch multiple URLs in parallel. Returns an array of results in the same order as input URLs.",
+    "Fetch multiple URLs in parallel using real Chrome browsers. Each URL gets its own browser instance for isolation. Auto-detects content stabilization. Returns results in same order as input URLs.",
   inputSchema: {
     type: "object",
     properties: {
@@ -93,7 +94,8 @@ const FETCH_BATCH_TOOL: Tool = {
       timeout: {
         type: "number",
         default: 60000,
-        description: "Timeout in milliseconds per URL (default: 60000)",
+        description:
+          "Timeout in milliseconds per URL (default: 60000). Increase to 90000+ for slow-loading pages.",
       },
       human_mode: {
         type: "boolean",
