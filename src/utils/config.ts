@@ -216,10 +216,10 @@ export function validateConfig(cfg: Config): string[] {
     errors.push('timeouts.waitFor should be at least 100ms');
   }
 
-  // Browser validation (Camoufox handles user-agent and viewport automatically)
+  // Browser validation (nodriver handles user-agent and viewport automatically)
   // No additional browser config validation needed
 
-  // Stealth validation (Camoufox handles fingerprinting automatically)
+  // Stealth validation (nodriver handles fingerprinting automatically via undetected Chrome)
   // No additional stealth config validation needed
 
   // Retry validation
