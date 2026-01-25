@@ -41,6 +41,81 @@ except ImportError as e:
     pass
 
 
+# Default timeouts for individual operations (in seconds)
+# These prevent indefinite hangs on nodriver operations
+NAVIGATE_TIMEOUT = 30  # browser.get() navigation
+EVALUATE_TIMEOUT = 10  # page.evaluate() JavaScript execution
+CONTENT_TIMEOUT = 30   # page.get_content() DOM serialization
+
+
+async def safe_evaluate(page, script: str, timeout: float = EVALUATE_TIMEOUT, default=None):
+    """
+    Execute page.evaluate() with a timeout to prevent indefinite hangs.
+
+    Args:
+        page: Nodriver page object
+        script: JavaScript to execute
+        timeout: Maximum seconds to wait (default: EVALUATE_TIMEOUT)
+        default: Value to return on timeout/error
+
+    Returns:
+        Result of evaluation, or default on timeout/error
+    """
+    try:
+        return await asyncio.wait_for(page.evaluate(script), timeout=timeout)
+    except asyncio.TimeoutError:
+        return default
+    except Exception:
+        return default
+
+
+async def safe_navigate(browser, url: str, timeout: float = NAVIGATE_TIMEOUT):
+    """
+    Execute browser.get() with a timeout to prevent indefinite hangs.
+
+    Args:
+        browser: Nodriver browser object
+        url: URL to navigate to
+        timeout: Maximum seconds to wait (default: NAVIGATE_TIMEOUT)
+
+    Returns:
+        Page object
+
+    Raises:
+        FetchError: If navigation times out
+    """
+    try:
+        return await asyncio.wait_for(browser.get(url), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise FetchError("TIMEOUT", f"Navigation to {url} timed out after {timeout}s")
+
+
+async def safe_get_content(page, timeout: float = CONTENT_TIMEOUT) -> str:
+    """
+    Execute page.get_content() with a timeout to prevent indefinite hangs.
+
+    Args:
+        page: Nodriver page object
+        timeout: Maximum seconds to wait (default: CONTENT_TIMEOUT)
+
+    Returns:
+        Page HTML content, or empty string on timeout
+    """
+    try:
+        return await asyncio.wait_for(page.get_content(), timeout=timeout)
+    except asyncio.TimeoutError:
+        # Fallback to evaluate if get_content times out
+        try:
+            return await asyncio.wait_for(
+                page.evaluate("document.documentElement.outerHTML"),
+                timeout=5
+            ) or ""
+        except:
+            return ""
+    except Exception:
+        return ""
+
+
 class HumanBehavior:
     """
     Wrapper class for human-like browser behavior.
@@ -381,18 +456,33 @@ async def start_headed_browser(
         # If connection fails, we MUST clean up the Chrome process we just spawned
         try:
             # When host and port are provided, nodriver doesn't launch its own browser
-            browser = await uc.start(
-                host='127.0.0.1',
-                port=port,
-                sandbox=False,
+            # Add timeout to prevent hanging if Chrome doesn't respond
+            browser = await asyncio.wait_for(
+                uc.start(
+                    host='127.0.0.1',
+                    port=port,
+                    sandbox=False,
+                ),
+                timeout=NAVIGATE_TIMEOUT
             )
 
             # Get the page (should already be at the URL)
             # nodriver's browser.get() with an existing browser just switches to/opens a tab
-            pages = await browser.get(url)
-            page = pages
+            page = await safe_navigate(browser, url)
 
             return browser, page, chrome_pid, port
+        except asyncio.TimeoutError:
+            log_error("nodriver_connect_timeout", port=port)
+            # Clean up Chrome process on timeout
+            try:
+                import signal
+                os.kill(chrome_pid, signal.SIGTERM)
+            except:
+                try:
+                    os.kill(chrome_pid, signal.SIGKILL)
+                except:
+                    pass
+            raise FetchError("TIMEOUT", f"Browser connection timed out after {NAVIGATE_TIMEOUT}s")
         except Exception as e:
             # Nodriver failed to connect - clean up the Chrome process we spawned
             log_error("nodriver_connect_failed", port=port, error=str(e))
@@ -409,13 +499,16 @@ async def start_headed_browser(
         # Other platforms: Use off-screen positioning fallback
         log_info("headed_offscreen_mode", platform=system, window_position="-2400,-2400")
 
-        browser = await uc.start(
-            headless=False,
-            browser_executable_path=chrome_path,
-            sandbox=False,
-            browser_args=['--window-position=-2400,-2400'],
+        browser = await asyncio.wait_for(
+            uc.start(
+                headless=False,
+                browser_executable_path=chrome_path,
+                sandbox=False,
+                browser_args=['--window-position=-2400,-2400'],
+            ),
+            timeout=NAVIGATE_TIMEOUT
         )
-        page = await browser.get(url)
+        page = await safe_navigate(browser, url)
 
         return browser, page, None, None
 
@@ -503,8 +596,8 @@ def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = 
 async def detect_datadome(page) -> bool:
     """Detect if DataDome anti-bot challenge is present."""
     try:
-        # Get page title first
-        title = await page.evaluate("document.title") or ""
+        # Get page title first (with timeout to prevent hangs)
+        title = await safe_evaluate(page, "document.title", timeout=5, default="") or ""
         title_lower = title.lower()
 
         # Check title for DataDome block indicators
@@ -519,7 +612,7 @@ async def detect_datadome(page) -> bool:
                 log_info("datadome_detected_by_title", title=title, indicator=indicator)
                 return True
 
-        # Check for DataDome-specific elements
+        # Check for DataDome-specific elements (with timeout)
         element_checks = [
             "document.querySelector('iframe[src*=\"datadome\"]') !== null",
             "document.querySelector('iframe[src*=\"captcha-delivery\"]') !== null",
@@ -529,37 +622,31 @@ async def detect_datadome(page) -> bool:
         ]
 
         for check in element_checks:
-            try:
-                result = await page.evaluate(check)
-                if result:
-                    log_info("datadome_detected_by_element", check=check)
-                    return True
-            except:
-                continue
+            result = await safe_evaluate(page, check, timeout=3, default=False)
+            if result:
+                log_info("datadome_detected_by_element", check=check)
+                return True
 
-        # Check body text for DataDome block indicators
-        try:
-            body_text = await page.evaluate("document.body.innerText.substring(0, 2000)") or ""
-            body_lower = body_text.lower()
+        # Check body text for DataDome block indicators (with timeout)
+        body_text = await safe_evaluate(page, "document.body.innerText.substring(0, 2000)", timeout=5, default="") or ""
+        body_lower = body_text.lower()
 
-            text_indicators = [
-                "request blocked",
-                "ray id",
-                "support.indeed.com",
-                "pardon our interruption",
-                "we have detected unusual traffic",
-                "blocked by datadome",
-                "your request has been blocked",
-                "automated access",
-                "captcha-delivery.com",
-            ]
+        text_indicators = [
+            "request blocked",
+            "ray id",
+            "support.indeed.com",
+            "pardon our interruption",
+            "we have detected unusual traffic",
+            "blocked by datadome",
+            "your request has been blocked",
+            "automated access",
+            "captcha-delivery.com",
+        ]
 
-            for indicator in text_indicators:
-                if indicator in body_lower:
-                    log_info("datadome_detected_by_text", indicator=indicator)
-                    return True
-        except:
-            pass
+        for indicator in text_indicators:
+            if indicator in body_lower:
+                log_info("datadome_detected_by_text", indicator=indicator)
+                return True
 
         return False
     except Exception as e:
@@ -570,8 +657,8 @@ async def detect_datadome(page) -> bool:
 async def detect_cloudflare(page) -> bool:
     """Detect if Cloudflare or similar challenge is present."""
     try:
-        # Get page title first
-        title = await page.evaluate("document.title") or ""
+        # Get page title first (with timeout to prevent hangs)
+        title = await safe_evaluate(page, "document.title", timeout=5, default="") or ""
         title_lower = title.lower()
 
         # Check title for challenge indicators
@@ -593,7 +680,7 @@ async def detect_cloudflare(page) -> bool:
                 log_info("cloudflare_detected_by_title", title=title, indicator=indicator)
                 return True
 
-        # Check for common challenge page elements
+        # Check for common challenge page elements (with timeout)
         element_checks = [
             "document.querySelector('#cf-wrapper') !== null",
             "document.querySelector('.cf-browser-verification') !== null",
@@ -604,34 +691,28 @@ async def detect_cloudflare(page) -> bool:
         ]
 
         for check in element_checks:
-            try:
-                result = await page.evaluate(check)
-                if result:
-                    log_info("cloudflare_detected_by_element", check=check)
-                    return True
-            except:
-                continue
+            result = await safe_evaluate(page, check, timeout=3, default=False)
+            if result:
+                log_info("cloudflare_detected_by_element", check=check)
+                return True
 
-        # Check body text for challenge indicators
-        try:
-            body_text = await page.evaluate("document.body.innerText.substring(0, 1000)") or ""
-            body_lower = body_text.lower()
+        # Check body text for challenge indicators (with timeout)
+        body_text = await safe_evaluate(page, "document.body.innerText.substring(0, 1000)", timeout=5, default="") or ""
+        body_lower = body_text.lower()
 
-            text_indicators = [
-                "checking your browser",
-                "ddos protection",
-                "verify you are human",
-                "please verify",
-                "help us protect",
-                "security check",
-            ]
+        text_indicators = [
+            "checking your browser",
+            "ddos protection",
+            "verify you are human",
+            "please verify",
+            "help us protect",
+            "security check",
+        ]
 
-            for indicator in text_indicators:
-                if indicator in body_lower:
-                    log_info("cloudflare_detected_by_text", indicator=indicator)
-                    return True
-        except:
-            pass
+        for indicator in text_indicators:
+            if indicator in body_lower:
+                log_info("cloudflare_detected_by_text", indicator=indicator)
+                return True
 
         return False
     except Exception as e:
@@ -709,14 +790,14 @@ async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
         human: Optional HumanBehavior instance for natural scrolling
     """
     try:
-        # Get page dimensions (Nodriver evaluate returns primitives directly)
-        page_height = await page.evaluate("""
+        # Get page dimensions with timeout to prevent hangs
+        page_height = await safe_evaluate(page, """
             Math.max(
                 document.body.scrollHeight,
                 document.documentElement.scrollHeight
             )
-        """) or 3000
-        viewport_height = await page.evaluate("window.innerHeight") or 800
+        """, timeout=5, default=3000) or 3000
+        viewport_height = await safe_evaluate(page, "window.innerHeight", timeout=5, default=800) or 800
 
         page_height = int(page_height)
         viewport_height = int(viewport_height)
@@ -734,31 +815,31 @@ async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
                 {'scroll_to': max_scroll, 'delay_after': 0.5, 'smooth': True},
             ]
 
-        # Execute scroll sequence
+        # Execute scroll sequence with timeout on each scroll
         for action in scroll_sequence:
             scroll_to = action['scroll_to']
             delay = action['delay_after']
             smooth = action.get('smooth', True)
 
             if smooth:
-                await page.evaluate(f"""
+                await safe_evaluate(page, f"""
                     window.scrollTo({{
                         top: {scroll_to},
                         behavior: 'smooth'
                     }});
-                """)
+                """, timeout=3, default=None)
             else:
-                await page.evaluate(f"window.scrollTo(0, {scroll_to});")
+                await safe_evaluate(page, f"window.scrollTo(0, {scroll_to});", timeout=3, default=None)
 
             await asyncio.sleep(delay)
 
         # Scroll back to top
-        await page.evaluate("""
+        await safe_evaluate(page, """
             window.scrollTo({
                 top: 0,
                 behavior: 'smooth'
             });
-        """)
+        """, timeout=3, default=None)
         await asyncio.sleep(0.3)
 
         log_info("lazy_load_complete", scroll_actions=len(scroll_sequence))
@@ -767,11 +848,11 @@ async def lazy_load_content(page, human: Optional[HumanBehavior] = None):
         log_error("lazy_load_failed", error=str(e))
         # Final fallback if everything fails
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2);")
+            await safe_evaluate(page, "window.scrollTo(0, document.body.scrollHeight / 2);", timeout=3, default=None)
             await asyncio.sleep(0.5)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+            await safe_evaluate(page, "window.scrollTo(0, document.body.scrollHeight);", timeout=3, default=None)
             await asyncio.sleep(0.5)
-            await page.evaluate("window.scrollTo(0, 0);")
+            await safe_evaluate(page, "window.scrollTo(0, 0);", timeout=3, default=None)
         except Exception as fallback_err:
             log_error("lazy_load_fallback_failed", error=str(fallback_err))
 
@@ -801,6 +882,7 @@ async def fetch_page(
     browser = None
     chrome_pid = None  # For macOS background mode cleanup (actual Chrome PID)
     debug_port = None  # For macOS background mode
+    user_data_dir = None  # Temp directory for browser profile (cleaned up in finally)
     start_time = time.time()
 
     try:
@@ -820,31 +902,37 @@ async def fetch_page(
 
         # Launch browser
         # sandbox=False required on macOS, otherwise Chrome fails to start
-        # Allocate unique port to avoid conflicts with parallel browser instances
-        port = find_available_port()
-        log_info("browser_port_allocated", port=port, headless=headless)
+        # Use unique user_data_dir to avoid conflicts with parallel browser instances
+        # (each Chrome instance needs its own profile directory)
+        import tempfile
+        user_data_dir = tempfile.mkdtemp(prefix='turbowebfetch_')  # Cleaned up in finally
+        log_info("browser_user_data_dir", user_data_dir=user_data_dir, headless=headless)
 
         # Build browser args
-        browser_args = [f'--remote-debugging-port={port}']
+        browser_args = []
         if not headless:
             browser_args.append('--window-position=-2400,-2400')
             log_info("headed_offscreen_mode", window_position="-2400,-2400")
 
-        browser = await uc.start(
-            headless=headless,
-            browser_executable_path=chrome_path,
-            sandbox=False,
-            browser_args=browser_args,
+        browser = await asyncio.wait_for(
+            uc.start(
+                headless=headless,
+                browser_executable_path=chrome_path,
+                sandbox=False,
+                browser_args=browser_args,
+                user_data_dir=user_data_dir,
+            ),
+            timeout=NAVIGATE_TIMEOUT
         )
-        page = await browser.get(url)
+        page = await safe_navigate(browser, url)
 
         # Initialize human behavior wrapper (after browser starts, we can get viewport)
         human: Optional[HumanBehavior] = None
         if human_mode:
             try:
                 # Nodriver returns lists from evaluate, so get width/height separately
-                viewport_width = await page.evaluate("window.innerWidth") or 1920
-                viewport_height = await page.evaluate("window.innerHeight") or 1080
+                viewport_width = await safe_evaluate(page, "window.innerWidth", timeout=5, default=1920) or 1920
+                viewport_height = await safe_evaluate(page, "window.innerHeight", timeout=5, default=1080) or 1080
                 human = HumanBehavior(
                     enabled=True,
                     viewport_width=int(viewport_width),
@@ -914,7 +1002,8 @@ async def fetch_page(
                 log_info("cloudflare_cf_verify_attempt", url=url)
                 try:
                     # Use nodriver's built-in Cloudflare bypass (clicks the checkbox)
-                    await page.verify_cf()
+                    # Add timeout to prevent hanging on cf_verify
+                    await asyncio.wait_for(page.verify_cf(), timeout=30)
                     log_info("cloudflare_cf_verify_success", url=url)
 
                     # Wait for redirect after verification
@@ -927,6 +1016,9 @@ async def fetch_page(
                         raise FetchError("BLOCKED", "Cloudflare challenge not bypassed after cf_verify")
                     else:
                         log_info("cloudflare_bypassed", url=url)
+                except asyncio.TimeoutError:
+                    log_error("cloudflare_cf_verify_timeout", url=url)
+                    raise FetchError("TIMEOUT", "Cloudflare verification timed out after 30s")
                 except FetchError:
                     raise  # Re-raise our own errors
                 except Exception as cf_err:
@@ -936,8 +1028,8 @@ async def fetch_page(
             # Re-initialize human behavior for new browser
             if human_mode:
                 try:
-                    viewport_width = await page.evaluate("window.innerWidth") or 1920
-                    viewport_height = await page.evaluate("window.innerHeight") or 1080
+                    viewport_width = await safe_evaluate(page, "window.innerWidth", timeout=5, default=1920) or 1920
+                    viewport_height = await safe_evaluate(page, "window.innerHeight", timeout=5, default=1080) or 1080
                     human = HumanBehavior(
                         enabled=True,
                         viewport_width=int(viewport_width),
@@ -985,8 +1077,8 @@ async def fetch_page(
                 # Re-initialize human behavior for new browser
                 if human_mode:
                     try:
-                        viewport_width = await page.evaluate("window.innerWidth") or 1920
-                        viewport_height = await page.evaluate("window.innerHeight") or 1080
+                        viewport_width = await safe_evaluate(page, "window.innerWidth", timeout=5, default=1920) or 1920
+                        viewport_height = await safe_evaluate(page, "window.innerHeight", timeout=5, default=1080) or 1080
                         human = HumanBehavior(
                             enabled=True,
                             viewport_width=int(viewport_width),
@@ -1034,25 +1126,17 @@ async def fetch_page(
         # Get final URL
         final_url = page.url
 
-        # Get page title
-        try:
-            title = await page.evaluate("document.title")
-        except:
-            title = ""
+        # Get page title (with timeout)
+        title = await safe_evaluate(page, "document.title", timeout=5, default="") or ""
 
-        # Get page HTML
-        try:
-            html = await page.get_content()
-        except Exception as e:
-            log_error("content_extraction_failed", error=str(e))
-            html = await page.evaluate("document.documentElement.outerHTML")
+        # Get page HTML (with timeout to prevent hangs on never-ending pages)
+        html = await safe_get_content(page, timeout=CONTENT_TIMEOUT)
+        if not html:
+            log_error("content_extraction_failed", error="get_content returned empty")
+            html = await safe_evaluate(page, "document.documentElement.outerHTML", timeout=10, default="") or ""
 
         # Get innerText as fallback for JS-heavy pages where Readability fails
-        inner_text = None
-        try:
-            inner_text = await page.evaluate("document.body.innerText")
-        except Exception as e:
-            log_error("innertext_extraction_failed", error=str(e))
+        inner_text = await safe_evaluate(page, "document.body.innerText", timeout=10, default=None)
 
         # Extract content based on format
         if format == "html":
@@ -1132,6 +1216,15 @@ async def fetch_page(
                 except:
                     pass
                 log_error("chrome_background_cleanup_failed", pid=chrome_pid, error=str(e))
+
+        # Clean up temp user data directory
+        if user_data_dir:
+            try:
+                import shutil
+                shutil.rmtree(user_data_dir, ignore_errors=True)
+                log_info("user_data_dir_cleanup", path=user_data_dir)
+            except Exception as e:
+                log_error("user_data_dir_cleanup_failed", path=user_data_dir, error=str(e))
 
 
 async def main():
