@@ -1,5 +1,18 @@
+# Node
 node_modules/
 dist/
-.DS_Store
-*.log
+
+# Python
+python/venv/
+python/__pycache__/
 __pycache__/
+*.pyc
+
+# Environment
+.env
+
+# OS
+.DS_Store
+
+# Logs
+*.log
