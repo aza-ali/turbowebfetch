@@ -26,7 +26,9 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "setup:python": "bash python/setup.sh",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "prepublishOnly": "cp README.md README.github.md && cp README.npm.md README.md",
+    "postpublish": "mv README.github.md README.md"
   },
   "keywords": [
     "mcp",
