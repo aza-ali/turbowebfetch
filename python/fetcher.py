@@ -578,6 +578,11 @@ def extract_text_content(html: str, title: str, inner_text: Optional[str] = None
             log_info("using_innertext_fallback", readability_len=len(text), innertext_len=len(inner_text), suspicious=is_suspicious)
             text = inner_text.strip()
 
+        # If text is empty but we have innerText, use it
+        if not text and inner_text and isinstance(inner_text, str) and len(inner_text) > 50:
+            log_info("readability_empty_using_innertext", innertext_len=len(inner_text))
+            text = inner_text.strip()
+
         return f"{title}\n\n{text}" if title else text
     except Exception as e:
         log_error("text_extraction_failed", error=str(e))
@@ -1338,7 +1343,16 @@ async def fetch_page(
             html = await safe_evaluate(page, "document.documentElement.outerHTML", timeout=10, default="") or ""
 
         # Get innerText as fallback for JS-heavy pages where Readability fails
-        inner_text = await safe_evaluate(page, "document.body.innerText", timeout=10, default=None)
+        inner_text_raw = await safe_evaluate(page, "document.body.innerText", timeout=10, default=None)
+        # Validate innerText is actually a string (nodriver can return error objects)
+        inner_text = inner_text_raw if isinstance(inner_text_raw, str) else None
+
+        # Log extraction inputs for debugging
+        log_info("content_extraction_inputs",
+                html_len=len(html) if html else 0,
+                title=title[:50] if title else "None",
+                innertext_len=len(inner_text) if inner_text else 0,
+                innertext_type=type(inner_text_raw).__name__)
 
         # Extract content based on format
         if format == "html":
