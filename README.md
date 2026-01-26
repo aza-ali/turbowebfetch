@@ -195,7 +195,7 @@ Each fetch is isolated. No cookies or state persist between requests.
 Clone and build locally:
 
 ```bash
-git clone https://github.com/AzaaliDev/turbowebfetch.git
+git clone https://github.com/aza-ali/turbowebfetch.git
 cd turbowebfetch
 npm install
 npm run build
