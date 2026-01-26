@@ -1,6 +1,6 @@
 {
   "name": "turbowebfetch",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Turn websites into LLM-ready data, locally. Handles dynamic JS, Cloudflare, and rendering automatically. 14 parallel browsers. Zero API keys.",
   "main": "dist/index.js",
   "bin": {

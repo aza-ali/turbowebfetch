@@ -26,7 +26,7 @@ Google Chrome must be installed (not Chromium).
 ## Quick Start
 
 ```bash
-claude mcp add turbowebfetch npx -y turbowebfetch
+claude mcp add turbowebfetch npx turbowebfetch
 ```
 
 That's it. Your agents now have access to the `fetch` and `fetch_batch` tools.
