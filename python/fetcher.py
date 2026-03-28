@@ -537,101 +537,211 @@ def output_result(result: Dict[str, Any]):
     print(json.dumps(result, ensure_ascii=False), flush=True)
 
 
+def _is_content_degenerate(text: str) -> bool:
+    """
+    Detect if extracted content is degenerate -- repetitive, low-information, or
+    clearly not the real page content. This catches cases where Readability latches
+    onto a repeated UI element (banners, badges, labels) instead of actual content.
+
+    Returns True if the content should be discarded in favor of innerText.
+    """
+    import re
+
+    if not text or len(text) < 50:
+        return True
+
+    # Split into non-empty lines
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    if not lines:
+        return True
+
+    # Check 1: Line repetition -- if any single line appears in >40% of all lines,
+    # the content is degenerate (e.g., Airbnb's "Now you'll see one price..." x60)
+    from collections import Counter
+    line_counts = Counter(lines)
+    most_common_line, most_common_count = line_counts.most_common(1)[0]
+    if len(lines) >= 5 and most_common_count / len(lines) > 0.4:
+        log_info("degenerate_repetition", repeated_line=most_common_line[:80], count=most_common_count, total_lines=len(lines))
+        return True
+
+    # Check 2: Sentence repetition -- split into sentences and check uniqueness.
+    # Handles cases where the same phrase repeats within a single long line.
+    sentences = re.split(r'[.!?]+\s*', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
+    if len(sentences) >= 5:
+        sentence_counts = Counter(sentences)
+        most_common_sent, sent_count = sentence_counts.most_common(1)[0]
+        if sent_count / len(sentences) > 0.4:
+            log_info("degenerate_sentence_repetition", repeated=most_common_sent[:80], count=sent_count, total=len(sentences))
+            return True
+
+    # Check 3: Unique content ratio -- if <30% of lines are unique,
+    # the content is likely a repeated UI pattern
+    unique_ratio = len(line_counts) / len(lines) if lines else 0
+    if len(lines) >= 10 and unique_ratio < 0.3:
+        log_info("degenerate_low_uniqueness", unique_ratio=round(unique_ratio, 2), unique=len(line_counts), total=len(lines))
+        return True
+
+    return False
+
+
+_SUSPICIOUS_PHRASES = [
+    "cookie", "consent", "privacy policy", "accept all", "gdpr",
+    "manage preferences", "personal information", "we use cookies",
+    "this site uses", "by continuing", "advertising partners"
+]
+
+
+def _is_cookie_banner(text: str) -> bool:
+    """Check if text looks like cookie/consent banner content."""
+    text_lower = text.lower()
+    return any(phrase in text_lower for phrase in _SUSPICIOUS_PHRASES)
+
+
+def _clean_innertext(inner_text: str) -> str:
+    """
+    Clean raw innerText for LLM consumption. innerText from SPAs contains
+    navigation, buttons, and UI noise. This removes the worst of it while
+    preserving the actual content.
+    """
+    import re
+
+    lines = inner_text.split('\n')
+    cleaned = []
+    seen = set()
+    prev_line = ""
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty lines (will add back spacing later)
+        if not stripped:
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+
+        # Skip very short lines that are likely UI elements (buttons, icons, nav items)
+        # but keep them if they look like list items or data points
+        if len(stripped) <= 2 and not stripped[0].isdigit():
+            continue
+
+        # Deduplicate consecutive identical lines
+        if stripped == prev_line:
+            continue
+
+        # Deduplicate non-consecutive identical lines (keep first occurrence only)
+        # but only for lines that appear to be UI noise (short, repeated)
+        if len(stripped) < 60 and stripped in seen:
+            continue
+
+        seen.add(stripped)
+        cleaned.append(stripped)
+        prev_line = stripped
+
+    result = '\n'.join(cleaned)
+
+    # Collapse runs of 3+ blank lines to 2
+    result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
+
+    return result.strip()
+
+
+def _readability_extract(html: str) -> str:
+    """Run Readability on HTML and return plain text."""
+    import re
+    import html as html_module
+
+    doc = Document(
+        html,
+        negative_keywords="cookie,consent,privacy,gdpr,banner,modal,popup,overlay,newsletter,subscribe,tracking",
+        min_text_length=15,
+    )
+    summary = doc.summary()
+
+    text = re.sub(r'<script[^>]*>.*?</script>', '', summary, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = html_module.unescape(text)
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+    return text.strip()
+
+
+def _readability_extract_html(html: str) -> str:
+    """Run Readability on HTML and return the summary HTML."""
+    doc = Document(
+        html,
+        negative_keywords="cookie,consent,privacy,gdpr,banner,modal,popup,overlay,newsletter,subscribe,tracking",
+        min_text_length=15,
+    )
+    return doc.summary()
+
+
+def _best_content(readability_text: str, inner_text: Optional[str], label: str = "") -> str:
+    """
+    Pick the best content between Readability output and innerText.
+
+    Strategy:
+    1. If Readability produced good content, use it (it's cleaner than innerText)
+    2. If Readability produced degenerate/suspicious content, fall back to cleaned innerText
+    3. If Readability is empty, use innerText
+    """
+    has_innertext = inner_text and isinstance(inner_text, str) and len(inner_text) > 50
+    is_degenerate = _is_content_degenerate(readability_text)
+    is_suspicious = _is_cookie_banner(readability_text)
+    is_short = len(readability_text) < 500
+
+    # Good Readability output: not degenerate, not suspicious, not too short
+    if readability_text and not is_degenerate and not is_suspicious:
+        # But if it's very short and innerText has much more, prefer innerText
+        if is_short and has_innertext and len(inner_text) > len(readability_text) * 3:
+            log_info(f"innertext_preferred_{label}", reason="readability_too_short",
+                     readability_len=len(readability_text), innertext_len=len(inner_text))
+            return _clean_innertext(inner_text)
+        return readability_text
+
+    # Degenerate or suspicious: fall back to innerText
+    if has_innertext:
+        reason = "degenerate" if is_degenerate else "suspicious" if is_suspicious else "short"
+        log_info(f"innertext_fallback_{label}", reason=reason,
+                 readability_len=len(readability_text), innertext_len=len(inner_text))
+        return _clean_innertext(inner_text)
+
+    # No innerText available: return whatever Readability gave us (better than nothing)
+    return readability_text
+
+
 def extract_text_content(html: str, title: str, inner_text: Optional[str] = None) -> str:
-    """Extract readable text content using Readability, with innerText fallback."""
+    """Extract readable text content using Readability, with smart innerText fallback."""
     try:
-        # Configure Readability to filter out cookie/consent noise
-        doc = Document(
-            html,
-            negative_keywords="cookie,consent,privacy,gdpr,banner,modal,popup,overlay,newsletter,subscribe,tracking",
-            min_text_length=15,  # Lower from default 25 to catch shorter headlines
-        )
-        summary = doc.summary()
-
-        # Simple text extraction
-        import re
-        # Remove HTML tags
-        text = re.sub(r'<script[^>]*>.*?</script>', '', summary, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', '', text)
-
-        # Decode HTML entities
-        import html as html_module
-        text = html_module.unescape(text)
-
-        # Clean up whitespace
-        text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
-        text = text.strip()
-
-        # Check if extracted content looks like cookie/consent banner text
-        text_lower = text.lower()
-        suspicious_phrases = [
-            "cookie", "consent", "privacy policy", "accept all", "gdpr",
-            "manage preferences", "personal information", "we use cookies",
-            "this site uses", "by continuing", "advertising partners"
-        ]
-        is_suspicious = any(phrase in text_lower for phrase in suspicious_phrases)
-
-        # Fallback to innerText if content is short OR looks like cookie banner
-        # Validate inner_text is a string (nodriver can return ExceptionDetails on JS errors)
-        if inner_text and isinstance(inner_text, str) and (len(text) < 500 or is_suspicious) and len(inner_text) > len(text):
-            log_info("using_innertext_fallback", readability_len=len(text), innertext_len=len(inner_text), suspicious=is_suspicious)
-            text = inner_text.strip()
-
-        # If text is empty but we have innerText, use it
-        if not text and inner_text and isinstance(inner_text, str) and len(inner_text) > 50:
-            log_info("readability_empty_using_innertext", innertext_len=len(inner_text))
-            text = inner_text.strip()
+        text = _readability_extract(html)
+        text = _best_content(text, inner_text, label="text")
 
         return f"{title}\n\n{text}" if title else text
     except Exception as e:
         log_error("text_extraction_failed", error=str(e))
-        # Fallback to innerText if available and is a string, else simple tag stripping
         if inner_text and isinstance(inner_text, str):
-            return f"{title}\n\n{inner_text.strip()}" if title else inner_text.strip()
+            cleaned = _clean_innertext(inner_text)
+            return f"{title}\n\n{cleaned}" if title else cleaned
         import re
         text = re.sub(r'<[^>]+>', '', html)
         return text.strip()
 
 
 def extract_markdown_content(html: str, title: str, inner_text: Optional[str] = None) -> str:
-    """Extract markdown content using Readability + Markdownify, with innerText fallback."""
+    """Extract markdown content using Readability + Markdownify, with smart innerText fallback."""
     try:
-        # Configure Readability to filter out cookie/consent noise
-        doc = Document(
-            html,
-            negative_keywords="cookie,consent,privacy,gdpr,banner,modal,popup,overlay,newsletter,subscribe,tracking",
-            min_text_length=15,  # Lower from default 25 to catch shorter headlines
-        )
-        summary = doc.summary()
-
-        # Convert to markdown
-        markdown = md(summary, heading_style="ATX", bullets="-")
-
-        # Clean up excessive newlines
         import re
+
+        summary_html = _readability_extract_html(html)
+        markdown = md(summary_html, heading_style="ATX", bullets="-")
         markdown = re.sub(r'\n\s*\n\s*\n', '\n\n', markdown)
         markdown = markdown.strip()
 
-        # Check if extracted content looks like cookie/consent banner text
-        md_lower = markdown.lower()
-        suspicious_phrases = [
-            "cookie", "consent", "privacy policy", "accept all", "gdpr",
-            "manage preferences", "personal information", "we use cookies",
-            "this site uses", "by continuing", "advertising partners"
-        ]
-        is_suspicious = any(phrase in md_lower for phrase in suspicious_phrases)
-
-        # Fallback to innerText if content is short OR looks like cookie banner
-        # Validate inner_text is a string (nodriver can return ExceptionDetails on JS errors)
-        if inner_text and isinstance(inner_text, str) and (len(markdown) < 500 or is_suspicious) and len(inner_text) > len(markdown):
-            log_info("using_innertext_fallback_md", readability_len=len(markdown), innertext_len=len(inner_text), suspicious=is_suspicious)
-            markdown = inner_text.strip()
+        markdown = _best_content(markdown, inner_text, label="markdown")
 
         return f"# {title}\n\n{markdown}" if title else markdown
     except Exception as e:
         log_error("markdown_extraction_failed", error=str(e))
-        # Fallback to text
         return extract_text_content(html, title, inner_text)
 
 
