@@ -1399,10 +1399,28 @@ async def main():
 
 
 if __name__ == "__main__":
+    import signal
+
+    def _sigterm_handler(signum, frame):
+        """Handle SIGTERM by outputting JSON before exiting, so Node.js never sees empty stdout."""
+        output_result({
+            "success": False,
+            "error": {"code": "KILLED", "message": "Process terminated by SIGTERM"},
+            "url": "",
+        })
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         log_info("interrupted")
+        output_result({
+            "success": False,
+            "error": {"code": "INTERRUPTED", "message": "Process interrupted"},
+            "url": "",
+        })
         sys.exit(1)
     except Exception as e:
         log_error("fatal_error", error=str(e))

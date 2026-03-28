@@ -180,8 +180,29 @@ async function callPythonFetcher(
 
       // Parse JSON output from Python
       // Only use the first line - nodriver outputs cleanup messages on subsequent lines
+      const firstLine = stdout.split('\n')[0].trim();
+
+      if (!firstLine) {
+        // Python exited without producing any JSON output.
+        // Common causes: import error (wrong Python version), SIGTERM, OOM.
+        const stderrSnippet = stderr.slice(0, 500).trim();
+        const reason = stderrSnippet
+          ? `Python process exited (code ${code}) with no output. stderr: ${stderrSnippet}`
+          : `Python process exited (code ${code}) with no output and no stderr. Check that Python dependencies are installed correctly (run: npx turbowebfetch --setup).`;
+
+        logger.error("python_empty_stdout", { url, code: code ?? -1, stderr: stderrSnippet });
+
+        resolve({
+          html: "",
+          title: "",
+          url,
+          status: 0,
+          error: reason,
+        });
+        return;
+      }
+
       try {
-        const firstLine = stdout.split('\n')[0].trim();
         const result = JSON.parse(firstLine);
 
         if (result.success) {
@@ -206,6 +227,7 @@ async function callPythonFetcher(
         logger.error("python_parse_error", {
           url,
           stdout: stdout.slice(0, 200),
+          stderr: stderr.slice(0, 200),
           error: parseError instanceof Error ? parseError.message : String(parseError),
         });
 
@@ -214,7 +236,7 @@ async function callPythonFetcher(
           title: "",
           url,
           status: 0,
-          error: `Failed to parse Python output: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
+          error: `Failed to parse Python output: ${parseError instanceof Error ? parseError.message : "Unknown error"}. stdout: ${stdout.slice(0, 100)}`,
         });
       }
     });
@@ -338,7 +360,9 @@ async function fetchWithRetry(
     if (
       result.error?.includes("BLOCKED") ||
       result.error?.includes("Invalid URL") ||
-      result.error?.includes("HTTP 4") // Client errors (400-499)
+      result.error?.includes("HTTP 4") || // Client errors (400-499)
+      result.error?.includes("Python process exited") || // Environment/setup issues - retrying won't help
+      result.error?.includes("Failed to spawn Python") // Binary missing
     ) {
       logger.debug("no_retry", {
         url,
